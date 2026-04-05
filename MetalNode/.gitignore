@@ -1,0 +1,17 @@
+# Xcode
+build/
+DerivedData/
+*.xcworkspace
+!*.xcworkspace/contents.xcworkspacedata
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+
+# Temporary files
+*.swp
+*.lock
