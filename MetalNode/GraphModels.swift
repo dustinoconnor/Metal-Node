@@ -6,6 +6,7 @@
 //
 
 import CoreGraphics
+import CoreVideo
 import Foundation
 import SwiftUI
 
@@ -1001,6 +1002,464 @@ struct BillboardNodeSettings: Equatable, Codable {
     }
 }
 
+struct LineNodeSettings: Equatable, Codable {
+    var x1: Double = 0.2
+    var y1: Double = 0.2
+    var x2: Double = 0.8
+    var y2: Double = 0.2
+    var z: Double = 0.0
+    var thickness: Double = 0.02
+    var opacity: Double = 1.0
+    var red: Double = 1.0
+    var green: Double = 1.0
+    var blue: Double = 1.0
+    var alpha: Double = 1.0
+}
+
+enum Scene3DPrimitiveKind: String, CaseIterable, Codable, Identifiable {
+    case box
+    case sphere
+    case capsule
+    case cone
+    case cylinder
+    case torus
+    case plane
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .box: return "Box"
+        case .sphere: return "Sphere"
+        case .capsule: return "Capsule"
+        case .cone: return "Cone"
+        case .cylinder: return "Cylinder"
+        case .torus: return "Torus"
+        case .plane: return "Plane"
+        }
+    }
+}
+
+enum Scene3DLightType: String, CaseIterable, Codable, Identifiable {
+    case omni
+    case directional
+    case spot
+    case ambient
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .omni: return "Omni"
+        case .directional: return "Directional"
+        case .spot: return "Spot"
+        case .ambient: return "Ambient"
+        }
+    }
+}
+
+struct Scene3DLightNodeSettings: Equatable, Codable {
+    var type: Scene3DLightType = .omni
+    var positionX: Double = 2.5
+    var positionY: Double = 3.0
+    var positionZ: Double = 5.0
+    var rotationX: Double = -40.0
+    var rotationY: Double = 40.0
+    var rotationZ: Double = 0.0
+    var intensity: Double = 1100.0
+    var red: Double = 1.0
+    var green: Double = 1.0
+    var blue: Double = 1.0
+    var alpha: Double = 1.0
+    var innerSpotAngle: Double = 25.0
+    var outerSpotAngle: Double = 50.0
+    var castsShadow: Bool = false
+}
+
+struct Scene3DPrimitiveNodeSettings: Equatable, Codable {
+    var primitive: Scene3DPrimitiveKind = .box
+    var positionX: Double = 0.0
+    var positionY: Double = 0.0
+    var positionZ: Double = 0.0
+    var rotationX: Double = 22.0
+    var rotationY: Double = 30.0
+    var rotationZ: Double = 0.0
+    var scale: Double = 1.0
+    var cameraDistance: Double = 4.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 16.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var lightIntensity: Double = 1100.0
+    var materialRed: Double = 0.84
+    var materialGreen: Double = 0.9
+    var materialBlue: Double = 1.0
+    var materialAlpha: Double = 1.0
+    var backgroundAlpha: Double = 0.0
+}
+
+struct Scene3DTextNodeSettings: Equatable, Codable {
+    var text: String = "Metal Composer"
+    var fontName: String = ""
+    var fontSize: Double = 1.0
+    var extrusionDepth: Double = 0.24
+    var chamferRadius: Double = 0.03
+    var flatness: Double = 0.2
+    var positionX: Double = 0.0
+    var positionY: Double = 0.0
+    var positionZ: Double = 0.0
+    var rotationX: Double = 18.0
+    var rotationY: Double = 0.0
+    var rotationZ: Double = 0.0
+    var scale: Double = 0.75
+    var cameraDistance: Double = 6.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 8.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var lightIntensity: Double = 1200.0
+    var materialRed: Double = 0.92
+    var materialGreen: Double = 0.95
+    var materialBlue: Double = 1.0
+    var materialAlpha: Double = 1.0
+    var backgroundAlpha: Double = 0.0
+}
+
+struct Scene3DModelNodeSettings: Equatable, Codable {
+    var filename: String = "Model"
+    var bookmarkData: Data = Data()
+    var positionX: Double = 0.0
+    var positionY: Double = 0.0
+    var positionZ: Double = 0.0
+    var rotationX: Double = 0.0
+    var rotationY: Double = 0.0
+    var rotationZ: Double = 0.0
+    var scale: Double = 1.0
+    var cameraDistance: Double = 6.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 12.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var lightIntensity: Double = 100.0
+    var animationPlay: Double = 1.0
+    var animationClipStart: Double = 0.0
+    var animationClipEnd: Double = 1.0
+    var animationSpeed: Double = 1.0
+    var animationLoops: Bool = true
+    var backgroundAlpha: Double = 0.0
+}
+
+enum Scene3DParticleShape: String, CaseIterable, Codable, Identifiable {
+    case point
+    case sphere
+    case box
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .point: return "Point"
+        case .sphere: return "Sphere"
+        case .box: return "Box"
+        }
+    }
+}
+
+enum Scene3DParticleBlendMode: String, CaseIterable, Codable, Identifiable {
+    case alpha
+    case additive
+    case screen
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .alpha: return "Alpha"
+        case .additive: return "Additive"
+        case .screen: return "Screen"
+        }
+    }
+}
+
+struct Scene3DParticleNodeSettings: Equatable, Codable {
+    var shape: Scene3DParticleShape = .point
+    var blendMode: Scene3DParticleBlendMode = .additive
+    var positionX: Double = 0.0
+    var positionY: Double = 0.0
+    var positionZ: Double = 0.0
+    var rotationX: Double = 0.0
+    var rotationY: Double = 0.0
+    var rotationZ: Double = 0.0
+    var scale: Double = 1.0
+    var particleCount: Double = 1100.0
+    var birthRate: Double = 550.0
+    var lifetime: Double = 2.0
+    var speed: Double = 1.2
+    var spread: Double = 120.0
+    var size: Double = 0.045
+    var red: Double = 0.55
+    var green: Double = 0.82
+    var blue: Double = 1.0
+    var alpha: Double = 0.85
+    var gravityY: Double = -0.25
+    var cameraDistance: Double = 6.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 12.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var backgroundAlpha: Double = 0.0
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case shape
+        case blendMode
+        case positionX
+        case positionY
+        case positionZ
+        case rotationX
+        case rotationY
+        case rotationZ
+        case scale
+        case particleCount
+        case birthRate
+        case lifetime
+        case speed
+        case spread
+        case size
+        case red
+        case green
+        case blue
+        case alpha
+        case gravityY
+        case cameraDistance
+        case cameraOrbit
+        case cameraPitch
+        case cameraPanX
+        case cameraPanY
+        case backgroundAlpha
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        shape = try container.decodeIfPresent(Scene3DParticleShape.self, forKey: .shape) ?? .point
+        blendMode = try container.decodeIfPresent(Scene3DParticleBlendMode.self, forKey: .blendMode) ?? .additive
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? 0.0
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? 0.0
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? 0.0
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? 0.0
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? 0.0
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? 0.0
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1.0
+        particleCount = try container.decodeIfPresent(Double.self, forKey: .particleCount) ?? 1100.0
+        birthRate = try container.decodeIfPresent(Double.self, forKey: .birthRate) ?? 550.0
+        lifetime = try container.decodeIfPresent(Double.self, forKey: .lifetime) ?? 2.0
+        speed = try container.decodeIfPresent(Double.self, forKey: .speed) ?? 1.2
+        spread = try container.decodeIfPresent(Double.self, forKey: .spread) ?? 120.0
+        size = try container.decodeIfPresent(Double.self, forKey: .size) ?? 0.045
+        red = try container.decodeIfPresent(Double.self, forKey: .red) ?? 0.55
+        green = try container.decodeIfPresent(Double.self, forKey: .green) ?? 0.82
+        blue = try container.decodeIfPresent(Double.self, forKey: .blue) ?? 1.0
+        alpha = try container.decodeIfPresent(Double.self, forKey: .alpha) ?? 0.85
+        gravityY = try container.decodeIfPresent(Double.self, forKey: .gravityY) ?? -0.25
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? 6.0
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? 0.0
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? 12.0
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? 0.0
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? 0.0
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? 0.0
+    }
+}
+
+struct Scene3DTransformNodeSettings: Equatable, Codable {
+    var x: Double = 0.0
+    var y: Double = 0.0
+    var z: Double = 0.0
+    var scaleX: Double = 1.0
+    var scaleY: Double = 1.0
+    var scaleZ: Double = 1.0
+    var rotationX: Double = 0.0
+    var rotationY: Double = 0.0
+    var rotationZ: Double = 0.0
+}
+
+struct Scene3DRenderNodeSettings: Equatable, Codable {
+    var sceneCount: Int = 4
+    var cameraDistance: Double = 6.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 12.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var backgroundAlpha: Double = 0.0
+    var defaultLightIntensity: Double = 100.0
+}
+
+extension Scene3DLightNodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case type, positionX, positionY, positionZ, rotationX, rotationY, rotationZ
+        case intensity, red, green, blue, alpha
+        case innerSpotAngle, outerSpotAngle, castsShadow
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        type = try container.decodeIfPresent(Scene3DLightType.self, forKey: .type) ?? type
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? positionX
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? positionY
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? positionZ
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? rotationX
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? rotationY
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? rotationZ
+        intensity = try container.decodeIfPresent(Double.self, forKey: .intensity) ?? intensity
+        red = try container.decodeIfPresent(Double.self, forKey: .red) ?? red
+        green = try container.decodeIfPresent(Double.self, forKey: .green) ?? green
+        blue = try container.decodeIfPresent(Double.self, forKey: .blue) ?? blue
+        alpha = try container.decodeIfPresent(Double.self, forKey: .alpha) ?? alpha
+        innerSpotAngle = try container.decodeIfPresent(Double.self, forKey: .innerSpotAngle) ?? innerSpotAngle
+        outerSpotAngle = try container.decodeIfPresent(Double.self, forKey: .outerSpotAngle) ?? outerSpotAngle
+        castsShadow = try container.decodeIfPresent(Bool.self, forKey: .castsShadow) ?? castsShadow
+    }
+}
+
+extension TrackballNodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case sensitivity, panSensitivity, zoomSensitivity, invertY, initialOrbit, initialPitch
+        case initialDistance, minDistance, maxDistance, initialPanX, initialPanY
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        sensitivity = try container.decodeIfPresent(Double.self, forKey: .sensitivity) ?? sensitivity
+        panSensitivity = try container.decodeIfPresent(Double.self, forKey: .panSensitivity) ?? panSensitivity
+        zoomSensitivity = try container.decodeIfPresent(Double.self, forKey: .zoomSensitivity) ?? zoomSensitivity
+        invertY = try container.decodeIfPresent(Bool.self, forKey: .invertY) ?? invertY
+        initialOrbit = try container.decodeIfPresent(Double.self, forKey: .initialOrbit) ?? initialOrbit
+        initialPitch = try container.decodeIfPresent(Double.self, forKey: .initialPitch) ?? initialPitch
+        initialDistance = try container.decodeIfPresent(Double.self, forKey: .initialDistance) ?? initialDistance
+        minDistance = try container.decodeIfPresent(Double.self, forKey: .minDistance) ?? minDistance
+        maxDistance = try container.decodeIfPresent(Double.self, forKey: .maxDistance) ?? maxDistance
+        initialPanX = try container.decodeIfPresent(Double.self, forKey: .initialPanX) ?? initialPanX
+        initialPanY = try container.decodeIfPresent(Double.self, forKey: .initialPanY) ?? initialPanY
+    }
+}
+
+extension Scene3DPrimitiveNodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case primitive, positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
+        case cameraDistance, cameraOrbit, cameraPitch, cameraPanX, cameraPanY
+        case lightIntensity, materialRed, materialGreen, materialBlue, materialAlpha, backgroundAlpha
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        primitive = try container.decodeIfPresent(Scene3DPrimitiveKind.self, forKey: .primitive) ?? primitive
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? positionX
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? positionY
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? positionZ
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? rotationX
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? rotationY
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? rotationZ
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? scale
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? cameraDistance
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? cameraOrbit
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? cameraPitch
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? cameraPanX
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? cameraPanY
+        lightIntensity = try container.decodeIfPresent(Double.self, forKey: .lightIntensity) ?? lightIntensity
+        materialRed = try container.decodeIfPresent(Double.self, forKey: .materialRed) ?? materialRed
+        materialGreen = try container.decodeIfPresent(Double.self, forKey: .materialGreen) ?? materialGreen
+        materialBlue = try container.decodeIfPresent(Double.self, forKey: .materialBlue) ?? materialBlue
+        materialAlpha = try container.decodeIfPresent(Double.self, forKey: .materialAlpha) ?? materialAlpha
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? backgroundAlpha
+    }
+}
+
+extension Scene3DTextNodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case text, fontName, fontSize, extrusionDepth, chamferRadius, flatness
+        case positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
+        case cameraDistance, cameraOrbit, cameraPitch, cameraPanX, cameraPanY
+        case lightIntensity, materialRed, materialGreen, materialBlue, materialAlpha, backgroundAlpha
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        text = try container.decodeIfPresent(String.self, forKey: .text) ?? text
+        fontName = try container.decodeIfPresent(String.self, forKey: .fontName) ?? fontName
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? fontSize
+        extrusionDepth = try container.decodeIfPresent(Double.self, forKey: .extrusionDepth) ?? extrusionDepth
+        chamferRadius = try container.decodeIfPresent(Double.self, forKey: .chamferRadius) ?? chamferRadius
+        flatness = try container.decodeIfPresent(Double.self, forKey: .flatness) ?? flatness
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? positionX
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? positionY
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? positionZ
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? rotationX
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? rotationY
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? rotationZ
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? scale
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? cameraDistance
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? cameraOrbit
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? cameraPitch
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? cameraPanX
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? cameraPanY
+        lightIntensity = try container.decodeIfPresent(Double.self, forKey: .lightIntensity) ?? lightIntensity
+        materialRed = try container.decodeIfPresent(Double.self, forKey: .materialRed) ?? materialRed
+        materialGreen = try container.decodeIfPresent(Double.self, forKey: .materialGreen) ?? materialGreen
+        materialBlue = try container.decodeIfPresent(Double.self, forKey: .materialBlue) ?? materialBlue
+        materialAlpha = try container.decodeIfPresent(Double.self, forKey: .materialAlpha) ?? materialAlpha
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? backgroundAlpha
+    }
+}
+
+extension Scene3DModelNodeSettings {
+    private enum CodingKeys: String, CodingKey {
+        case filename, bookmarkData, positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
+        case cameraDistance, cameraOrbit, cameraPitch, cameraPanX, cameraPanY
+        case lightIntensity, animationPlay, animationClipStart, animationClipEnd, animationSpeed, animationLoops, backgroundAlpha
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? filename
+        bookmarkData = try container.decodeIfPresent(Data.self, forKey: .bookmarkData) ?? bookmarkData
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? positionX
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? positionY
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? positionZ
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? rotationX
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? rotationY
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? rotationZ
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? scale
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? cameraDistance
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? cameraOrbit
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? cameraPitch
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? cameraPanX
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? cameraPanY
+        lightIntensity = try container.decodeIfPresent(Double.self, forKey: .lightIntensity) ?? lightIntensity
+        animationPlay = try container.decodeIfPresent(Double.self, forKey: .animationPlay) ?? animationPlay
+        animationClipStart = try container.decodeIfPresent(Double.self, forKey: .animationClipStart) ?? animationClipStart
+        animationClipEnd = try container.decodeIfPresent(Double.self, forKey: .animationClipEnd) ?? animationClipEnd
+        animationSpeed = try container.decodeIfPresent(Double.self, forKey: .animationSpeed) ?? animationSpeed
+        animationLoops = try container.decodeIfPresent(Bool.self, forKey: .animationLoops) ?? animationLoops
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? backgroundAlpha
+    }
+}
+
+struct Scene3DMaterialNodeSettings: Equatable, Codable {
+    var red: Double = 0.92
+    var green: Double = 0.95
+    var blue: Double = 1.0
+    var alpha: Double = 1.0
+    var metallic: Double = 0.35
+    var roughness: Double = 0.28
+    var emission: Double = 0.0
+    var doubleSided: Bool = true
+}
+
 struct PolarNodeSettings: Equatable, Codable {
     var centerX: Double = 0.5
     var centerY: Double = 0.5
@@ -1253,6 +1712,7 @@ struct GridLayoutNodeSettings: Equatable, Codable {
 
 enum MacroPublishedPortKind: Equatable, Codable {
     case fragmentShader
+    case materialSignal(String)
     case pointSignal(String)
     case point3Signal(String)
     case point4Signal(String)
@@ -1272,6 +1732,7 @@ enum MacroPublishedPortKind: Equatable, Codable {
 
     private enum KindTag: String, Codable {
         case fragmentShader
+        case materialSignal
         case pointSignal
         case point3Signal
         case point4Signal
@@ -1291,6 +1752,8 @@ enum MacroPublishedPortKind: Equatable, Codable {
         switch type {
         case .fragmentShader:
             self = .fragmentShader
+        case .materialSignal:
+            self = .materialSignal(try container.decode(String.self, forKey: .value))
         case .pointSignal:
             self = .pointSignal(try container.decode(String.self, forKey: .value))
         case .point3Signal:
@@ -1321,6 +1784,9 @@ enum MacroPublishedPortKind: Equatable, Codable {
         switch self {
         case .fragmentShader:
             try container.encode(KindTag.fragmentShader, forKey: .type)
+        case .materialSignal(let value):
+            try container.encode(KindTag.materialSignal, forKey: .type)
+            try container.encode(value, forKey: .value)
         case .pointSignal(let value):
             try container.encode(KindTag.pointSignal, forKey: .type)
             try container.encode(value, forKey: .value)
@@ -1460,6 +1926,20 @@ struct ZoomGestureNodeSettings: Equatable, Codable {
     var maxZoom: Double = 3.0
 }
 
+struct TrackballNodeSettings: Equatable, Codable {
+    var sensitivity: Double = 1.0
+    var panSensitivity: Double = 6.0
+    var zoomSensitivity: Double = 1.0
+    var invertY: Bool = true
+    var initialOrbit: Double = 0.0
+    var initialPitch: Double = 0.0
+    var initialDistance: Double = 6.0
+    var minDistance: Double = 1.0
+    var maxDistance: Double = 30.0
+    var initialPanX: Double = 0.0
+    var initialPanY: Double = 0.0
+}
+
 struct DepthEstimateNodeSettings: Equatable, Codable {
     var nearSpan: Double = 0.32
     var farSpan: Double = 0.08
@@ -1476,6 +1956,8 @@ enum MathOperation: String, CaseIterable, Identifiable, Codable {
     case minimum
     case maximum
     case power
+    case sine
+    case cosine
     case round
     case floor
     case ceil
@@ -1491,6 +1973,8 @@ enum MathOperation: String, CaseIterable, Identifiable, Codable {
         case .minimum: return "min"
         case .maximum: return "max"
         case .power: return "pow"
+        case .sine: return "sin"
+        case .cosine: return "cos"
         case .round: return "round"
         case .floor: return "floor"
         case .ceil: return "ceil"
@@ -1502,6 +1986,11 @@ struct MathNodeSettings: Equatable, Codable {
     var operation: MathOperation = .add
     var a: Double = 0.0
     var b: Double = 0.0
+}
+
+struct ExpressionNodeSettings: Equatable, Codable {
+    var expression: String = "a"
+    var variables: [String: Double] = ["a": 0.0]
 }
 
 struct ClampNodeSettings: Equatable, Codable {
@@ -1565,6 +2054,13 @@ struct CompareNodeSettings: Equatable, Codable {
     var operation: CompareOperation = .lessThan
     var referenceValue: Double = 0.5
     var epsilon: Double = 0.02
+}
+
+struct BeatDetectNodeSettings: Equatable, Codable {
+    var kickThreshold: Double = 0.12
+    var snareThreshold: Double = 0.10
+    var kickSensitivity: Double = 2.5
+    var snareSensitivity: Double = 2.8
 }
 
 struct MIDIOutNodeSettings: Equatable, Codable {
@@ -1669,6 +2165,7 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
     var isLooping: Bool = true
     var isPlaying: Bool = true
     var rate: Double = 1.0
+    var seekPosition: Double = 0.0
 
     enum CodingKeys: String, CodingKey {
         case filename
@@ -1676,18 +2173,21 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
         case isLooping
         case isPlaying
         case rate
+        case seekPosition
     }
 
     init(filename: String = "Video",
          bookmarkData: Data = Data(),
          isLooping: Bool = true,
          isPlaying: Bool = true,
-         rate: Double = 1.0) {
+         rate: Double = 1.0,
+         seekPosition: Double = 0.0) {
         self.filename = filename
         self.bookmarkData = bookmarkData
         self.isLooping = isLooping
         self.isPlaying = isPlaying
         self.rate = rate
+        self.seekPosition = seekPosition
     }
 
     init(from decoder: Decoder) throws {
@@ -1697,6 +2197,7 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
         isLooping = try container.decodeIfPresent(Bool.self, forKey: .isLooping) ?? true
         isPlaying = try container.decodeIfPresent(Bool.self, forKey: .isPlaying) ?? true
         rate = try container.decodeIfPresent(Double.self, forKey: .rate) ?? 1.0
+        seekPosition = try container.decodeIfPresent(Double.self, forKey: .seekPosition) ?? 0.0
     }
 }
 
@@ -1793,13 +2294,31 @@ struct CoreImageNodeSettings: Equatable, Codable {
 }
 
 struct UniformDescriptor: Identifiable {
-    let id = UUID()
+    let id: UUID
     let name: String
     let kind: UniformKind
     var defaultValue: UniformValue
     var minValue: Double?
     var maxValue: Double?
     let label: String?
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        kind: UniformKind,
+        defaultValue: UniformValue,
+        minValue: Double?,
+        maxValue: Double?,
+        label: String?
+    ) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.defaultValue = defaultValue
+        self.minValue = minValue
+        self.maxValue = maxValue
+        self.label = label
+    }
 }
 
 enum GraphNodeKind {
@@ -1825,8 +2344,10 @@ enum GraphNodeKind {
     case pinch
     case scrollGesture
     case zoomGesture
+    case trackball
     case depthEstimate
     case math
+    case expression
     case clamp
     case mapRange
     case logic
@@ -1855,6 +2376,7 @@ enum GraphNodeKind {
     case arrayCount
     case textImage
     case audio
+    case beatDetect
     case slider
     case sliderStyle
     case button
@@ -1875,6 +2397,15 @@ enum GraphNodeKind {
     case note
     case transform
     case billboard
+    case line
+    case scene3DTransform
+    case scene3DRender
+    case scene3DLight
+    case scene3DMaterial
+    case scene3DPrimitive
+    case scene3DText
+    case scene3DModel
+    case scene3DParticle
     case select
     case scalarSwitch
     case stringSwitch
@@ -1924,6 +2455,9 @@ enum GraphPortDirection {
 
 enum GraphPortKind: Equatable, Hashable {
     case fragmentShader
+    case scene3DSignal(String)
+    case lightSignal(String)
+    case materialSignal(String)
     case time
     case pointSignal(String)
     case point3Signal(String)
@@ -1992,6 +2526,10 @@ struct PreviewImagePass {
     let imageData: Data
 }
 
+struct PreviewVideoPlayerPass {
+    let nodeID: UUID
+}
+
 struct PreviewFeedbackPass {
     let nodeID: UUID
     let source: PreviewPassSource
@@ -2050,35 +2588,136 @@ struct PreviewTransformPass {
     let tint: SIMD4<Float>
 }
 
+struct PreviewLineInstance {
+    let position: SIMD3<Float>
+    let scale: SIMD2<Float>
+    let rotationRadiansZ: Float
+    let color: SIMD4<Float>
+}
+
+struct PreviewLineBatchPass {
+    let nodeID: UUID
+    let instances: [PreviewLineInstance]
+}
+
+struct PreviewScene3DPrimitivePass {
+    let nodeID: UUID
+    let settings: Scene3DPrimitiveNodeSettings
+    let light: PreviewScene3DLight?
+    let material: Scene3DMaterialNodeSettings
+    let materialMaps: PreviewScene3DMaterialMaps?
+}
+
+struct PreviewScene3DTextPass {
+    let nodeID: UUID
+    let settings: Scene3DTextNodeSettings
+    let light: PreviewScene3DLight?
+    let material: Scene3DMaterialNodeSettings
+    let materialMaps: PreviewScene3DMaterialMaps?
+}
+
+struct PreviewScene3DModelPass {
+    let nodeID: UUID
+    let settings: Scene3DModelNodeSettings
+    let light: PreviewScene3DLight?
+    let material: Scene3DMaterialNodeSettings?
+    let materialMaps: PreviewScene3DMaterialMaps?
+}
+
+struct PreviewScene3DParticlePass {
+    let nodeID: UUID
+    let settings: Scene3DParticleNodeSettings
+    let spriteSource: PreviewPassSource?
+}
+
+struct PreviewScene3DLight {
+    let settings: Scene3DLightNodeSettings
+}
+
+indirect enum PreviewScene3DSource {
+    case primitive(PreviewScene3DPrimitivePass)
+    case text(PreviewScene3DTextPass)
+    case model(PreviewScene3DModelPass)
+    case particle(PreviewScene3DParticlePass)
+    case light(PreviewScene3DLight)
+    case transform(
+        nodeID: UUID,
+        source: PreviewScene3DSource,
+        x: Float,
+        y: Float,
+        z: Float,
+        scaleX: Float,
+        scaleY: Float,
+        scaleZ: Float,
+        rotationDegreesX: Float,
+        rotationDegreesY: Float,
+        rotationDegreesZ: Float
+    )
+}
+
+struct PreviewScene3DRenderPass {
+    let nodeID: UUID
+    let sources: [PreviewScene3DSource]
+    let cameraDistance: Float
+    let cameraOrbit: Float
+    let cameraPitch: Float
+    let cameraPanX: Float
+    let cameraPanY: Float
+    let backgroundAlpha: Float
+    let defaultLightIntensity: Float
+}
+
+struct PreviewScene3DMaterialMaps {
+    let diffuse: PreviewPassSource?
+    let specular: PreviewPassSource?
+    let metallic: PreviewPassSource?
+    let bump: PreviewPassSource?
+    let displacement: PreviewPassSource?
+}
+
 indirect enum PreviewPassSource {
     case shader(PreviewShaderPass)
+    case scene3DSource(PreviewScene3DSource)
+    case scene3DRender(PreviewScene3DRenderPass)
     case trail(PreviewTrailPass)
     case circle(PreviewCirclePass)
     case clear(PreviewClearPass)
     case image(PreviewImagePass)
-    case videoPlayer(PreviewImagePass)
+    case videoPlayer(PreviewVideoPlayerPass)
     case video
     case coreImage(PreviewCoreImagePass)
     case underwater(PreviewUnderwaterPass)
     case transform(PreviewTransformPass)
+    case lineBatch(PreviewLineBatchPass)
+    case scene3DPrimitive(PreviewScene3DPrimitivePass)
+    case scene3DText(PreviewScene3DTextPass)
+    case scene3DModel(PreviewScene3DModelPass)
+    case scene3DParticle(PreviewScene3DParticlePass)
     case transition(PreviewTransitionPass)
     case mix(primary: PreviewPassSource, secondary: PreviewPassSource, amount: Float)
     case layers(layers: [PreviewLayerPass], opacity: Float)
     case feedback(PreviewFeedbackPass)
+    case feedbackHistory(nodeID: UUID)
 }
 
 indirect enum PreviewRenderConfiguration {
     case empty
     case single(PreviewShaderPass)
+    case scene3DRender(PreviewScene3DRenderPass)
     case trail(PreviewTrailPass)
     case circle(PreviewCirclePass)
     case clear(PreviewClearPass)
     case image(PreviewImagePass)
-    case videoPlayer(PreviewImagePass)
+    case videoPlayer(PreviewVideoPlayerPass)
     case video
     case coreImage(PreviewCoreImagePass)
     case underwater(PreviewUnderwaterPass)
     case transform(PreviewTransformPass)
+    case lineBatch(PreviewLineBatchPass)
+    case scene3DPrimitive(PreviewScene3DPrimitivePass)
+    case scene3DText(PreviewScene3DTextPass)
+    case scene3DModel(PreviewScene3DModelPass)
+    case scene3DParticle(PreviewScene3DParticlePass)
     case feedback(PreviewFeedbackPass)
     case transition(PreviewTransitionPass)
     case mix(primary: PreviewPassSource, secondary: PreviewPassSource, amount: Float)

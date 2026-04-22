@@ -16,6 +16,7 @@ struct PreviewWindowView: View {
             configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
             onMouseChange: store.updateMousePosition,
             onMouseButtonChange: store.updateMouseButtons,
+            onModifierFlagsChange: store.updatePreviewModifierFlags,
             onScrollChange: store.updateScrollDelta
         )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

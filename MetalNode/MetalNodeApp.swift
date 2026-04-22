@@ -14,6 +14,7 @@ struct MetalNodeApp: App {
         WindowGroup {
             RootWindowView()
         }
+        .defaultSize(width: 1200, height: 820)
         .commands {
             MetalNodeCommands()
         }

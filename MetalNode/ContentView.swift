@@ -37,6 +37,28 @@ private enum UIPreferenceKey {
     static let nodeLibraryWidth = "ui.nodeLibraryWidth"
 }
 
+private struct ParameterInspectorWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
+private struct NodeLibraryWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var store: GraphStore
     @AppStorage(UIPreferenceKey.parameterInspectorWidth) private var parameterInspectorWidth = 300.0
@@ -45,12 +67,21 @@ struct ContentView: View {
     @State private var isImportingFile = false
     @State private var isNodeLibraryVisible = true
     @State private var isParameterInspectorVisible = true
+    @State private var isStartupApplyingLayout = true
 
     var body: some View {
         HSplitView {
             if isParameterInspectorVisible {
                 ParameterInspectorPanel(store: store)
                     .frame(minWidth: 240, idealWidth: parameterInspectorWidth, maxWidth: 420, maxHeight: .infinity)
+                    .background(
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ParameterInspectorWidthPreferenceKey.self,
+                                value: geometry.size.width
+                            )
+                        }
+                    )
             }
 
             NodeCanvasView(
@@ -109,6 +140,14 @@ struct ContentView: View {
             if isNodeLibraryVisible {
                 LibraryInspectorPanel(store: store, importTarget: $importTarget, isImportingFile: $isImportingFile)
                     .frame(minWidth: 250, idealWidth: nodeLibraryWidth, maxWidth: 420, maxHeight: .infinity)
+                    .background(
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: NodeLibraryWidthPreferenceKey.self,
+                                value: geometry.size.width
+                            )
+                        }
+                    )
             }
         }
         .background(
@@ -116,11 +155,12 @@ struct ContentView: View {
                 store: store,
                 parameterInspectorWidth: $parameterInspectorWidth,
                 nodeLibraryWidth: $nodeLibraryWidth,
+                isStartupApplyingLayout: isStartupApplyingLayout,
                 isParameterInspectorVisible: isParameterInspectorVisible,
                 isNodeLibraryVisible: isNodeLibraryVisible
             )
         )
-        .frame(minWidth: 1260, minHeight: 820)
+        .frame(minWidth: 760, minHeight: 520)
         .background(MainWindowConfigurator(store: store))
         .onAppear {
             GraphStore.setCommandTargetStore(store)
@@ -128,6 +168,9 @@ struct ContentView: View {
                 store.restoreLastOpenedGraphIfNeeded()
                 parameterInspectorWidth = store.parameterInspectorWidth
                 nodeLibraryWidth = store.nodeLibraryWidth
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    isStartupApplyingLayout = false
+                }
             }
         }
         .onChange(of: store.inspectorToggleRequestID) { _, _ in
@@ -150,6 +193,30 @@ struct ContentView: View {
         .onChange(of: store.nodeLibraryWidth) { _, newValue in
             if abs(nodeLibraryWidth - newValue) > 0.5 {
                 nodeLibraryWidth = newValue
+            }
+        }
+        .onPreferenceChange(ParameterInspectorWidthPreferenceKey.self) { width in
+            guard !isStartupApplyingLayout else { return }
+            guard isParameterInspectorVisible, width >= 240 else { return }
+            let measuredWidth = Double(width)
+            if abs(parameterInspectorWidth - measuredWidth) > 0.5 {
+                parameterInspectorWidth = measuredWidth
+                UserDefaults.standard.set(measuredWidth, forKey: UIPreferenceKey.parameterInspectorWidth)
+                Task { @MainActor in
+                    store.updatePanelWidths(parameterWidth: measuredWidth, markDirty: true)
+                }
+            }
+        }
+        .onPreferenceChange(NodeLibraryWidthPreferenceKey.self) { width in
+            guard !isStartupApplyingLayout else { return }
+            guard isNodeLibraryVisible, width >= 250 else { return }
+            let measuredWidth = Double(width)
+            if abs(nodeLibraryWidth - measuredWidth) > 0.5 {
+                nodeLibraryWidth = measuredWidth
+                UserDefaults.standard.set(measuredWidth, forKey: UIPreferenceKey.nodeLibraryWidth)
+                Task { @MainActor in
+                    store.updatePanelWidths(libraryWidth: measuredWidth, markDirty: true)
+                }
             }
         }
         .fileImporter(
@@ -185,6 +252,7 @@ private struct MainSplitViewConfigurator: NSViewRepresentable {
     @ObservedObject var store: GraphStore
     @Binding var parameterInspectorWidth: Double
     @Binding var nodeLibraryWidth: Double
+    let isStartupApplyingLayout: Bool
     let isParameterInspectorVisible: Bool
     let isNodeLibraryVisible: Bool
 
@@ -229,6 +297,7 @@ private struct MainSplitViewConfigurator: NSViewRepresentable {
                 queue: .main
             ) { [weak coordinator] _ in
                 guard let coordinator, !coordinator.isApplyingLayout else { return }
+                guard !isStartupApplyingLayout else { return }
                 guard let splitView = coordinator.splitView else { return }
                 let widths = measuredWidths(in: splitView)
                 if let parameter = widths.parameter {
@@ -345,7 +414,7 @@ private struct MainWindowConfigurator: NSViewRepresentable {
             coordinator.configuredWindowNumber = window.windowNumber
         }
         window.title = store.currentGraphDisplayName
-        window.isDocumentEdited = false
+        window.isDocumentEdited = store.isCurrentGraphDirty
         window.representedURL = store.currentGraphFileURL
     }
 }
@@ -809,10 +878,14 @@ private struct NodeLibrarySection: View {
             return descriptor("scrollGesture", "Scroll Gesture", "Gated vertical motion", .cyan, "core:scrollGesture")
         case .zoomGesture:
             return descriptor("zoomGesture", "Zoom Gesture", "Two-point pinch zoom", .blue, "core:zoomGesture")
+        case .trackball:
+            return descriptor("trackball", "Trackball", "Orbit, pan, zoom, and object rotation control", .blue, "core:trackball")
         case .depthEstimate:
             return descriptor("depthEstimate", "Depth Estimate", "Infer z from hand span", .teal, "core:depthEstimate")
         case .math:
             return descriptor("math", "Math", "Scalar math and rounding", .orange, "core:math")
+        case .expression:
+            return descriptor("expression", "Expression", "Scalar formula with named inputs", .orange, "core:expression")
         case .clamp:
             return descriptor("clamp", "Clamp", "Limit a scalar value", .yellow, "core:clamp")
         case .mapRange:
@@ -868,7 +941,9 @@ private struct NodeLibrarySection: View {
         case .textImage:
             return descriptor("textImage", "Text Image", "Render string to source", .yellow, "core:textImage")
         case .audio:
-            return descriptor("audio", "Audio", "Amplitude and bands", .pink, "core:audio")
+            return descriptor("audio", "Audio", "Amplitude, bands, and spectrum array", .pink, "core:audio")
+        case .beatDetect:
+            return descriptor("beatDetect", "Beat Detect", "Kick and snare trigger source", .pink, "core:beatDetect")
         case .slider:
             return descriptor("slider", "Slider", "On-screen scalar control", .mint, "core:slider")
         case .sliderStyle:
@@ -917,8 +992,26 @@ private struct NodeLibrarySection: View {
             return descriptor("note", "Note", "Graph note and screen overlay", .yellow, "core:note")
         case .transform:
             return descriptor("transform", "Transform", "Position scale rotate", .cyan, "core:transform")
+        case .scene3DTransform:
+            return descriptor("scene3DTransform", "3D Transform", "Transform a 3D scene signal downstream", .blue, "core:scene3DTransform")
+        case .scene3DRender:
+            return descriptor("scene3DRender", "3D Render", "Render one or more 3D scene signals to a shader source", .blue, "core:scene3DRender")
         case .billboard:
             return descriptor("billboard", "Billboard", "Position size tint", .pink, "core:billboard")
+        case .line:
+            return descriptor("line", "Line", "Endpoints thickness color", .red, "core:line")
+        case .scene3DLight:
+            return descriptor("scene3DLight", "3D Light", "Reusable SceneKit light for 3D nodes", .blue, "core:scene3DLight")
+        case .scene3DMaterial:
+            return descriptor("scene3DMaterial", "3D Material", "Reusable base material for 3D nodes", .blue, "core:scene3DMaterial")
+        case .scene3DPrimitive:
+            return descriptor("scene3DPrimitive", "3D Primitive", "SceneKit primitive rendered as a source", .blue, "core:scene3DPrimitive")
+        case .scene3DText:
+            return descriptor("scene3DText", "3D Text", "SceneKit 3D text with font and extrusion controls", .blue, "core:scene3DText")
+        case .scene3DModel:
+            return descriptor("scene3DModel", "3D Model", "SceneKit model file rendered as a source", .blue, "core:scene3DModel")
+        case .scene3DParticle:
+            return descriptor("scene3DParticle", "3D Particles", "SceneKit particle emitter rendered as a source", .blue, "core:scene3DParticle")
         case .select:
             return descriptor("select", "Select", "Switch between two sources", .mint, "core:select")
         case .scalarSwitch:
@@ -932,7 +1025,7 @@ private struct NodeLibrarySection: View {
         case .clear:
             return descriptor("clear", "Clear", "Solid color background", .gray, "core:clear")
         case .imageNode:
-            return descriptor("image", "Image", "Drag file onto graph", .yellow, "core:image")
+            return descriptor("image", "Image", "Choose or drag image file", .yellow, "core:image")
         case .webView:
             return descriptor("webView", "WebView", "Interactive web page source", .orange, "core:webView")
         case .aiImage:
@@ -1011,6 +1104,30 @@ private struct NodeLibrarySection: View {
             return descriptor("plasmaVortex", "Plasma Vortex", "Twisting plasma spiral preset", .pink, "core:plasmaVortex")
         case .cyberTunnel:
             return descriptor("cyberTunnel", "Cyber Tunnel", "Neon tunnel preset", .blue, "core:cyberTunnel")
+        case .rgbOffsetSplit:
+            return descriptor("rgbOffsetSplit", "RGB Offset Split", "Channel split offset video effect", .pink, "core:rgbOffsetSplit")
+        case .edgeDetection:
+            return descriptor("edgeDetection", "Edge Detection", "Edge detection video effect", .mint, "core:edgeDetection")
+        case .liquidNoiseWipe:
+            return descriptor("liquidNoiseWipe", "Liquid Noise Wipe", "Liquid noise wipe transition", .cyan, "core:liquidNoiseWipe")
+        case .mercuryMelt:
+            return descriptor("mercuryMelt", "Mercury Melt", "Mercury melt video effect", .gray, "core:mercuryMelt")
+        case .glitchDisplacement:
+            return descriptor("glitchDisplacement", "Glitch Displacement", "Glitch displacement video effect", .indigo, "core:glitchDisplacement")
+        case .datamosh:
+            return descriptor("datamosh", "Datamosh", "Feedback data mosh video effect", .indigo, "core:datamosh")
+        case .temporalGhostTrails:
+            return descriptor("temporalGhostTrails", "Temporal Ghost Trails", "Temporal ghost trails video effect", .cyan, "core:temporalGhostTrails")
+        case .frameMelt:
+            return descriptor("frameMelt", "Frame Melt", "Frame melt feedback video effect", .orange, "core:frameMelt")
+        case .prismSplit:
+            return descriptor("prismSplit", "Prism Split", "Prism split video effect", .pink, "core:prismSplit")
+        case .ghostFrameEcho:
+            return descriptor("ghostFrameEcho", "Ghost Frame Echo", "Ghost frame echo video effect", .cyan, "core:ghostFrameEcho")
+        case .pixelSortBands:
+            return descriptor("pixelSortBands", "Pixel Sort Bands", "Pixel sort bands video effect", .orange, "core:pixelSortBands")
+        case .phyllotaxisPetalSpiral:
+            return descriptor("phyllotaxisPetalSpiral", "Phyllotaxis Petal Spiral", "Colored phyllotaxis petal spiral", .pink, "core:phyllotaxisPetalSpiral")
         case .metalFragment:
             return descriptor("fragment", "Metal Fragment", "Additional shader source", .green, "core:fragment")
         case .renderOutput:
@@ -1151,7 +1268,7 @@ private struct NodeLibrarySection: View {
             return "rectangle.2.swap"
         case "layers":
             return "square.3.stack.3d"
-        case "plasma", "lavaLamp", "organicMotion", "colorDiffusionFlow", "nebula", "liquidChrome", "liquidFlux", "prismRings", "turntableSpectrum", "underwater":
+        case "plasma", "lavaLamp", "organicMotion", "colorDiffusionFlow", "nebula", "liquidChrome", "liquidFlux", "prismRings", "turntableSpectrum", "underwater", "datamosh", "temporalGhostTrails", "frameMelt":
             return "wand.and.stars"
         case "fragment":
             return "chevron.left.forwardslash.chevron.right"
@@ -1322,10 +1439,14 @@ private struct SelectedNodePanel: View {
             return "Accumulates vertical motion from Point A, or from the midpoint when Point B is also connected. Feed it into WebView Scroll Y."
         case .zoomGesture:
             return "Accumulates pinch distance changes from two points and outputs a live zoom value for WebView Zoom."
+        case .trackball:
+            return "Tracks left-mouse dragging over a preview and turns it into orbit and pitch values for 3D scene control."
         case .depthEstimate:
             return "Estimates near/far hand depth from finger-to-thumb span and outputs normalized depth, raw span, and a touch gate for virtual surfaces."
         case .math:
-            return "Applies scalar math like add, subtract, multiply, divide, min, max, power, round, floor, or ceil to numeric inputs."
+            return "Applies scalar math like add, subtract, multiply, divide, min, max, power, sin, cos, round, floor, or ceil to numeric inputs."
+        case .expression:
+            return "Evaluates a scalar expression with named inputs so you can write formulas like cos(angle) * radius + centerX without building long math-node chains."
         case .clamp:
             return "Clamps an incoming scalar between Min and Max, using connected inputs when present or local fallback values when not."
         case .mapRange:
@@ -1395,7 +1516,9 @@ private struct SelectedNodePanel: View {
         case .textImage:
             return "Renders a string into an image source with font and X/Y positioning so you can feed text into Render, Layers, and effects."
         case .audio:
-            return "Live audio source driven by the current macOS input device. BlackHole works here when it is selected as the system/default input."
+            return "Live audio source driven by the current macOS input device, with amplitude outputs plus a 256-band spectrum array you can index inside iterators. BlackHole works here when it is selected as the system/default input."
+        case .beatDetect:
+            return "Beat detection source built on the live audio input. It outputs one-frame Kick and Snare triggers plus Kick Level and Snare Level values so you can drive toggles, counters, pulses, and reactive layouts."
         case .slider:
             return "On-screen slider source with a visible control plus scalar value output."
         case .sliderStyle:
@@ -1490,8 +1613,26 @@ private struct SelectedNodePanel: View {
             return "Editable graph note node that can also render as a transparent text overlay source through Layers or Render."
         case .transform:
             return "Wraps a visual source and repositions, scales, rotates, and fades it over transparent output. Use it for grids, picture-in-picture, and control layouts."
+        case .scene3DTransform:
+            return "Wraps a 3D scene signal with downstream position, rotation, and scale so you can keep models upright, stack transforms, and prepare for lights, physics, and scene graphs."
+        case .scene3DRender:
+            return "Renders one or more 3D scene signals into a shader source with shared camera controls. Use it to combine models, primitives, text, lights, and downstream transforms into one scene."
         case .billboard:
             return "Wraps a visual source with X, Y, Z, width, height, rotation, opacity, and tint color. If no source is connected it renders as a solid tinted quad. Use it for labels, sprites, list items, and z-ordered iterator layouts."
+        case .line:
+            return "Draws a colored line between X1/Y1 and X2/Y2 with adjustable thickness, opacity, and color input. Use it with iterator variables plus array indexing for spectrum analyzers, grids, and geometric wireframe layouts."
+        case .scene3DLight:
+            return "Builds a reusable SceneKit light with type, position, rotation, color, intensity, and spot controls so multiple 3D nodes can share one lighting rig."
+        case .scene3DMaterial:
+            return "Builds a reusable base material for 3D primitives, text, and imported models with color, opacity, metallic, roughness, emission, and double-sided controls."
+        case .scene3DPrimitive:
+            return "Renders a built-in SceneKit primitive like a box, sphere, torus, or plane into the graph. Use it as the first 3D source while we build out model loading, cameras, lights, and materials."
+        case .scene3DText:
+            return "Renders editable SceneKit 3D text into the graph with font, extrusion, chamfer, transform, camera, light, and color controls."
+        case .scene3DModel:
+            return "Loads a SceneKit-compatible 3D model file like DAE or USD and renders it into the graph with transform, camera, and light controls. Use it as a real 3D source before we build out full materials and animation controls."
+        case .scene3DParticle:
+            return "Creates a SceneKit particle emitter with transform, birth rate, lifetime, speed, spread, size, color, and blend controls."
         case .trail:
             return "Persistent rainbow trail renderer driven by a point signal like Mouse."
         case .monitor:

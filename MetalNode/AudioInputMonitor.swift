@@ -24,21 +24,34 @@ struct HandTrackingSnapshot: Equatable {
 
 @MainActor
 final class AudioInputMonitor: ObservableObject {
+    static let spectrumBandCount = 256
+
+    private struct AnalysisFrame {
+        let amplitudeRaw: Float
+        let lowRaw: Float
+        let midRaw: Float
+        let highRaw: Float
+        let spectrumRaw: [Float]
+    }
+
     struct Snapshot: Equatable {
         var amplitude: Float = 0
         var low: Float = 0
         var mid: Float = 0
         var high: Float = 0
+        var spectrum: [Float] = Array(repeating: 0, count: AudioInputMonitor.spectrumBandCount)
         var deviceName = "Default Input"
         var status = "Idle"
     }
 
-    @Published private(set) var snapshot = Snapshot()
+    private(set) var snapshot = Snapshot()
 
     private let engine = AVAudioEngine()
     private let analysisQueue = DispatchQueue(label: "MetalNode.AudioAnalysis")
+    private let analysisStateQueue = DispatchQueue(label: "MetalNode.AudioAnalysisState")
     private var cancellables = Set<AnyCancellable>()
     private var healthTimer: Timer?
+    private var publishTimer: Timer?
     private var fftSetup: FFTSetup?
     private let fftSize = 1024
     private let log2n: vDSP_Length = 10
@@ -46,14 +59,18 @@ final class AudioInputMonitor: ObservableObject {
     private var smoothedLow: Float = 0
     private var smoothedMid: Float = 0
     private var smoothedHigh: Float = 0
+    private var smoothedSpectrum = Array(repeating: Float(0), count: AudioInputMonitor.spectrumBandCount)
     private var amplitudeReference: Float = 0.08
     private var lowReference: Float = 1
     private var midReference: Float = 1
     private var highReference: Float = 1
+    private var spectrumReferences = Array(repeating: Float(0.02), count: AudioInputMonitor.spectrumBandCount)
     private var lastAudioFrameDate = Date.distantPast
     private var isTapInstalled = false
     private var isRestartScheduled = false
     private var isMonitoringEnabled = false
+    private var latestAnalysisFrame: AnalysisFrame?
+    private var lastAudioFrameUptime: TimeInterval = 0
 
     init() {
         configureObservers()
@@ -62,6 +79,7 @@ final class AudioInputMonitor: ObservableObject {
 
     deinit {
         healthTimer?.invalidate()
+        publishTimer?.invalidate()
         cancellables.removeAll()
         if let fftSetup {
             vDSP_destroy_fftsetup(fftSetup)
@@ -89,6 +107,10 @@ final class AudioInputMonitor: ObservableObject {
         }
     }
 
+    func spectrumValues() -> [Double] {
+        snapshot.spectrum.map(Double.init)
+    }
+
     func setMonitoringEnabled(_ enabled: Bool) {
         guard enabled != isMonitoringEnabled else { return }
         isMonitoringEnabled = enabled
@@ -103,6 +125,7 @@ final class AudioInputMonitor: ObservableObject {
             snapshot.low = 0
             snapshot.mid = 0
             snapshot.high = 0
+            snapshot.spectrum = Array(repeating: 0, count: Self.spectrumBandCount)
             snapshot.status = "Inactive"
         }
     }
@@ -193,12 +216,23 @@ final class AudioInputMonitor: ObservableObject {
         if let healthTimer {
             RunLoop.main.add(healthTimer, forMode: .common)
         }
+
+        publishTimer?.invalidate()
+        publishTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.publishLatestAnalysisFrame()
+            }
+        }
+        if let publishTimer {
+            RunLoop.main.add(publishTimer, forMode: .common)
+        }
     }
 
     private func recoverIfNeeded() {
         guard isMonitoringEnabled else { return }
 
-        let stalled = Date().timeIntervalSince(lastAudioFrameDate) > 3.0
+        let lastFrameUptime = analysisStateQueue.sync { lastAudioFrameUptime }
+        let stalled = lastFrameUptime > 0 && (ProcessInfo.processInfo.systemUptime - lastFrameUptime) > 8.0
         if !engine.isRunning || !isTapInstalled || stalled {
             scheduleRestart(status: stalled ? "Recovering audio" : "Restarting audio")
         }
@@ -227,44 +261,53 @@ final class AudioInputMonitor: ObservableObject {
         }
         engine.reset()
         lastAudioFrameDate = Date.distantPast
+        analysisStateQueue.async { [weak self] in
+            self?.latestAnalysisFrame = nil
+            self?.lastAudioFrameUptime = 0
+        }
     }
 
     private func analyze(buffer: AVAudioPCMBuffer) {
+        let fftSetup = self.fftSetup
+        let fftSize = self.fftSize
+        let log2n = self.log2n
+        let spectrumBandCount = Self.spectrumBandCount
+
         analysisQueue.async { [weak self] in
             guard
                 let self,
-                let fftSetup = self.fftSetup,
+                let fftSetup,
                 let channelData = buffer.floatChannelData?.pointee
             else {
                 return
             }
 
-            let frameCount = min(Int(buffer.frameLength), self.fftSize)
+            let frameCount = min(Int(buffer.frameLength), fftSize)
             if frameCount == 0 {
                 return
             }
 
-            var window = [Float](repeating: 0, count: self.fftSize)
-            var samples = [Float](repeating: 0, count: self.fftSize)
+            var window = [Float](repeating: 0, count: fftSize)
+            var samples = [Float](repeating: 0, count: fftSize)
             samples.replaceSubrange(0..<frameCount, with: UnsafeBufferPointer(start: channelData, count: frameCount))
-            vDSP_hann_window(&window, vDSP_Length(self.fftSize), Int32(vDSP_HANN_NORM))
-            vDSP_vmul(samples, 1, window, 1, &samples, 1, vDSP_Length(self.fftSize))
+            vDSP_hann_window(&window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
+            vDSP_vmul(samples, 1, window, 1, &samples, 1, vDSP_Length(fftSize))
 
             var rms: Float = 0
-            vDSP_rmsqv(samples, 1, &rms, vDSP_Length(self.fftSize))
+            vDSP_rmsqv(samples, 1, &rms, vDSP_Length(fftSize))
 
-            var real = [Float](repeating: 0, count: self.fftSize / 2)
-            var imag = [Float](repeating: 0, count: self.fftSize / 2)
+            var real = [Float](repeating: 0, count: fftSize / 2)
+            var imag = [Float](repeating: 0, count: fftSize / 2)
 
             real.withUnsafeMutableBufferPointer { realBuffer in
                 imag.withUnsafeMutableBufferPointer { imagBuffer in
                     var splitComplex = DSPSplitComplex(realp: realBuffer.baseAddress!, imagp: imagBuffer.baseAddress!)
                     samples.withUnsafeBufferPointer { sampleBuffer in
-                        sampleBuffer.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: self.fftSize / 2) { complexPointer in
-                            vDSP_ctoz(complexPointer, 2, &splitComplex, 1, vDSP_Length(self.fftSize / 2))
+                        sampleBuffer.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: fftSize / 2) { complexPointer in
+                            vDSP_ctoz(complexPointer, 2, &splitComplex, 1, vDSP_Length(fftSize / 2))
                         }
                     }
-                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, self.log2n, FFTDirection(FFT_FORWARD))
+                    vDSP_fft_zrip(fftSetup, &splitComplex, 1, log2n, FFTDirection(FFT_FORWARD))
                 }
             }
 
@@ -272,35 +315,66 @@ final class AudioInputMonitor: ObservableObject {
             let lowRaw = Self.averageBand(magnitudes, range: 2..<32)
             let midRaw = Self.averageBand(magnitudes, range: 32..<128)
             let highRaw = Self.averageBand(magnitudes, range: 128..<256)
-            let amplitudeRaw = rms
-
-            Task { @MainActor in
-                self.lastAudioFrameDate = Date()
-                let decay: Float = 0.985
-                self.amplitudeReference = max(amplitudeRaw, self.amplitudeReference * decay, 0.03)
-                self.lowReference = max(lowRaw, self.lowReference * decay, 0.015)
-                self.midReference = max(midRaw, self.midReference * decay, 0.015)
-                self.highReference = max(highRaw, self.highReference * decay, 0.015)
-
-                let amplitudeNormalized = min(max(amplitudeRaw / self.amplitudeReference, 0), 1)
-                let lowNormalized = min(max(lowRaw / self.lowReference, 0), 1)
-                let midNormalized = min(max(midRaw / self.midReference, 0), 1)
-                let highNormalized = min(max(highRaw / self.highReference, 0), 1)
-
-                let smoothing: Float = 0.22
-                self.smoothedAmplitude += (amplitudeNormalized - self.smoothedAmplitude) * smoothing
-                self.smoothedLow += (lowNormalized - self.smoothedLow) * smoothing
-                self.smoothedMid += (midNormalized - self.smoothedMid) * smoothing
-                self.smoothedHigh += (highNormalized - self.smoothedHigh) * smoothing
-
-                self.snapshot.amplitude = self.smoothedAmplitude
-                self.snapshot.low = self.smoothedLow
-                self.snapshot.mid = self.smoothedMid
-                self.snapshot.high = self.smoothedHigh
-                if self.snapshot.status != "Listening" {
-                    self.snapshot.status = "Listening"
-                }
+            let spectrumRaw = Self.spectrumBands(
+                magnitudes,
+                bandCount: spectrumBandCount
+            )
+            self.analysisStateQueue.async { [weak self] in
+                guard let self else { return }
+                self.lastAudioFrameUptime = ProcessInfo.processInfo.systemUptime
+                self.latestAnalysisFrame = AnalysisFrame(
+                    amplitudeRaw: rms,
+                    lowRaw: lowRaw,
+                    midRaw: midRaw,
+                    highRaw: highRaw,
+                    spectrumRaw: spectrumRaw
+                )
             }
+        }
+    }
+
+    private func publishLatestAnalysisFrame() {
+        guard isMonitoringEnabled else { return }
+
+        let latestFrame = analysisStateQueue.sync { latestAnalysisFrame }
+        guard let latestFrame else { return }
+
+        lastAudioFrameDate = Date()
+
+        let decay: Float = 0.985
+        amplitudeReference = max(latestFrame.amplitudeRaw, amplitudeReference * decay, 0.03)
+        lowReference = max(latestFrame.lowRaw, lowReference * decay, 0.015)
+        midReference = max(latestFrame.midRaw, midReference * decay, 0.015)
+        highReference = max(latestFrame.highRaw, highReference * decay, 0.015)
+        for index in latestFrame.spectrumRaw.indices {
+            let rawBand = latestFrame.spectrumRaw[index]
+            spectrumReferences[index] = max(rawBand, spectrumReferences[index] * decay, 0.008)
+        }
+
+        let amplitudeNormalized = min(max(latestFrame.amplitudeRaw / amplitudeReference, 0), 1)
+        let lowNormalized = min(max(latestFrame.lowRaw / lowReference, 0), 1)
+        let midNormalized = min(max(latestFrame.midRaw / midReference, 0), 1)
+        let highNormalized = min(max(latestFrame.highRaw / highReference, 0), 1)
+        let spectrumNormalized = latestFrame.spectrumRaw.enumerated().map { index, rawValue in
+            min(max(rawValue / spectrumReferences[index], 0), 1)
+        }
+
+        let smoothing: Float = 0.22
+        smoothedAmplitude += (amplitudeNormalized - smoothedAmplitude) * smoothing
+        smoothedLow += (lowNormalized - smoothedLow) * smoothing
+        smoothedMid += (midNormalized - smoothedMid) * smoothing
+        smoothedHigh += (highNormalized - smoothedHigh) * smoothing
+        for index in spectrumNormalized.indices {
+            smoothedSpectrum[index] += (spectrumNormalized[index] - smoothedSpectrum[index]) * 0.28
+        }
+
+        snapshot.amplitude = smoothedAmplitude
+        snapshot.low = smoothedLow
+        snapshot.mid = smoothedMid
+        snapshot.high = smoothedHigh
+        snapshot.spectrum = smoothedSpectrum
+        if snapshot.status != "Listening" {
+            snapshot.status = "Listening"
         }
     }
 
@@ -309,6 +383,24 @@ final class AudioInputMonitor: ObservableObject {
         guard !clamped.isEmpty else { return 0 }
         let values = magnitudes[clamped]
         return values.reduce(0, +) / Float(values.count)
+    }
+
+    nonisolated private static func spectrumBands(_ magnitudes: [Float], bandCount: Int) -> [Float] {
+        guard bandCount > 0 else { return [] }
+        let usableRange = 2..<magnitudes.count
+        guard usableRange.isEmpty == false else {
+            return Array(repeating: 0, count: bandCount)
+        }
+
+        let usableCount = usableRange.count
+        return (0..<bandCount).map { bandIndex in
+            let start = usableRange.lowerBound + ((bandIndex * usableCount) / bandCount)
+            let end = usableRange.lowerBound + (((bandIndex + 1) * usableCount) / bandCount)
+            let clampedEnd = max(start + 1, min(end, magnitudes.count))
+            let values = magnitudes[start..<clampedEnd]
+            guard values.isEmpty == false else { return 0 }
+            return values.reduce(0, +) / Float(values.count)
+        }
     }
 }
 

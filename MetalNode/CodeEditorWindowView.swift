@@ -33,7 +33,10 @@ struct CodeEditorWindowView: View {
                 }
             }
 
-            MetalSyntaxTextView(text: $store.editableMetalSource)
+            MetalSyntaxTextView(text: Binding(
+                get: { store.editableMetalSource },
+                set: { store.updateEditableMetalSourceFromEditor($0) }
+            ))
                 .padding(14)
                 .background(.black.opacity(0.28))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))

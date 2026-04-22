@@ -55,7 +55,7 @@ private enum GraphCanvasLayout {
 
     static func visibleInputPorts(for node: GraphNode) -> [GraphPort] {
         guard case .math = node.kind else { return node.inputPorts }
-        let unaryOperations: Set<MathOperation> = [.round, .floor, .ceil]
+        let unaryOperations: Set<MathOperation> = [.sine, .cosine, .round, .floor, .ceil]
         guard
             let store = GraphStore.currentForLayoutMetrics,
             unaryOperations.contains(store.settings(forMathNodeID: node.id).operation)
@@ -485,9 +485,14 @@ struct NodeCanvasView: View {
     }
 
     private func updatePortDrag(_ value: DragGesture.Value) {
+        let scrollAdjustment = autoScrollCanvasForPortDrag(atScaledLocation: value.location)
+        let effectiveScaledLocation = CGPoint(
+            x: value.location.x + scrollAdjustment.x,
+            y: value.location.y + scrollAdjustment.y
+        )
         let location = CGPoint(
-            x: value.location.x / zoom,
-            y: value.location.y / zoom
+            x: effectiveScaledLocation.x / zoom,
+            y: effectiveScaledLocation.y / zoom
         )
         dragLocation = location
         highlightedInputPortID = nearestCompatibleInputPort(to: location, for: draggedOutputPortID)
@@ -564,6 +569,61 @@ struct NodeCanvasView: View {
         }
 
         return bestMatch?.id
+    }
+
+    private func autoScrollCanvasForPortDrag(atScaledLocation location: CGPoint) -> CGPoint {
+        guard let scrollView = canvasScrollView else { return .zero }
+
+        let visibleBounds = scrollView.contentView.bounds
+        let contentSize = CGSize(width: canvasSize.width * zoom, height: canvasSize.height * zoom)
+        let edgeThreshold: CGFloat = 96
+        let maximumStep: CGFloat = 28
+
+        func scrollDelta(for coordinate: CGFloat, minEdge: CGFloat, maxEdge: CGFloat) -> CGFloat {
+            if coordinate < minEdge + edgeThreshold {
+                let proximity = min(1, ((minEdge + edgeThreshold) - coordinate) / edgeThreshold)
+                return -maximumStep * proximity
+            }
+            if coordinate > maxEdge - edgeThreshold {
+                let proximity = min(1, (coordinate - (maxEdge - edgeThreshold)) / edgeThreshold)
+                return maximumStep * proximity
+            }
+            return 0
+        }
+
+        let proposedDelta = CGPoint(
+            x: scrollDelta(for: location.x, minEdge: visibleBounds.minX, maxEdge: visibleBounds.maxX),
+            y: scrollDelta(for: location.y, minEdge: visibleBounds.minY, maxEdge: visibleBounds.maxY)
+        )
+
+        guard proposedDelta != .zero else { return .zero }
+
+        let maxOriginX = max(0, contentSize.width - visibleBounds.width)
+        let maxOriginY = max(0, contentSize.height - visibleBounds.height)
+        let currentOrigin = visibleBounds.origin
+        let targetOrigin = CGPoint(
+            x: min(max(currentOrigin.x + proposedDelta.x, 0), maxOriginX),
+            y: min(max(currentOrigin.y + proposedDelta.y, 0), maxOriginY)
+        )
+
+        let appliedDelta = CGPoint(
+            x: targetOrigin.x - currentOrigin.x,
+            y: targetOrigin.y - currentOrigin.y
+        )
+
+        guard appliedDelta != .zero else { return .zero }
+
+        scrollView.contentView.setBoundsOrigin(NSPoint(x: targetOrigin.x, y: targetOrigin.y))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+
+        Task { @MainActor in
+            store.updateCanvasViewportCenter(
+                currentViewportCenter(in: scrollView),
+                markDirty: false
+            )
+        }
+
+        return appliedDelta
     }
 
     private func handleDrop(items: [String], at location: CGPoint) -> Bool {
@@ -686,6 +746,11 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:trackball" {
+            store.addTrackballNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:depthEstimate" {
             store.addDepthEstimateNode(at: dropPoint)
             return finalizeDrop()
@@ -693,6 +758,11 @@ struct NodeCanvasView: View {
 
         if item == "core:math" {
             store.addMathNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:expression" {
+            store.addExpressionNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -836,6 +906,11 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:beatDetect" {
+            store.addBeatDetectNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:slider" {
             store.addSliderNode(at: dropPoint)
             return finalizeDrop()
@@ -951,8 +1026,23 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:scene3DTransform" {
+            store.addScene3DTransformNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DRender" {
+            store.addScene3DRenderNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:billboard" {
             store.addBillboardNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:line" {
+            store.addLineNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -1186,6 +1276,96 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:rgbOffsetSplit" {
+            store.addRGBOffsetSplitFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:edgeDetection" {
+            store.addEdgeDetectionFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:liquidNoiseWipe" {
+            store.addLiquidNoiseWipeFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:mercuryMelt" {
+            store.addMercuryMeltFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:glitchDisplacement" {
+            store.addGlitchDisplacementFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:datamosh" {
+            store.addDatamoshFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:temporalGhostTrails" {
+            store.addTemporalGhostTrailsFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:frameMelt" {
+            store.addFrameMeltFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:prismSplit" {
+            store.addPrismSplitFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:ghostFrameEcho" {
+            store.addGhostFrameEchoFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:pixelSortBands" {
+            store.addPixelSortBandsFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:phyllotaxisPetalSpiral" {
+            store.addPhyllotaxisPetalSpiralFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DMaterial" {
+            store.addScene3DMaterialNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DLight" {
+            store.addScene3DLightNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DPrimitive" {
+            store.addScene3DPrimitiveNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DText" {
+            store.addScene3DTextNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DModel" {
+            store.addScene3DModelNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DParticle" {
+            store.addScene3DParticleNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:fragment" {
             store.addMetalFragmentNode(at: dropPoint)
             return finalizeDrop()
@@ -1411,10 +1591,18 @@ struct NodeCanvasView: View {
 
         let deletableNodeIDs = selectedNodeIDs.filter { store.canDeleteNode($0) }
         if deletableNodeIDs.isEmpty == false {
-            for nodeID in deletableNodeIDs {
-                store.removeNode(nodeID)
-            }
+            let nodeIDsToDelete = Array(deletableNodeIDs)
             selectedNodeIDs.subtract(deletableNodeIDs)
+            store.selectedNodeIDs.subtract(deletableNodeIDs)
+            if let activeSelectedNodeID = selectedNodeID, deletableNodeIDs.contains(activeSelectedNodeID) {
+                store.selectedNodeID = nil
+                store.inspectorFocusTarget = .nodeLibrary
+            }
+            DispatchQueue.main.async {
+                for nodeID in nodeIDsToDelete {
+                    store.removeNode(nodeID)
+                }
+            }
             return
         }
 
@@ -1515,7 +1703,8 @@ struct NodeCanvasView: View {
     }
 
     private func restoreCanvasViewport() {
-        if let preferredCenter = store.requestedCanvasViewportCenter() {
+        if let preferredCenter = store.requestedCanvasViewportCenter(),
+           isReasonableViewportCenter(preferredCenter) {
             centerCanvas(on: preferredCenter)
             return
         }
@@ -1618,6 +1807,11 @@ struct NodeCanvasView: View {
     }
 
     private func graphContentCenter() -> CGPoint? {
+        guard let bounds = graphContentBounds() else { return nil }
+        return CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
+    private func graphContentBounds() -> CGRect? {
         let visibleNodes = document.nodes.filter { store.isNodeVisibleOnCanvas($0.id) }
         guard visibleNodes.isEmpty == false else { return nil }
 
@@ -1626,7 +1820,16 @@ struct NodeCanvasView: View {
         let maxX = visibleNodes.map { $0.position.x + GraphCanvasLayout.nodeWidth(for: $0) }.max() ?? minX
         let maxY = visibleNodes.map { $0.position.y + GraphCanvasLayout.nodeHeight(for: $0) }.max() ?? minY
 
-        return CGPoint(x: (minX + maxX) * 0.5, y: (minY + maxY) * 0.5)
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private func isReasonableViewportCenter(_ center: CGPoint) -> Bool {
+        guard let bounds = graphContentBounds() else { return true }
+
+        let paddingX = max(bounds.width * 0.75, viewportSize.width / max(zoom, 0.001), 240)
+        let paddingY = max(bounds.height * 0.75, viewportSize.height / max(zoom, 0.001), 240)
+        let expandedBounds = bounds.insetBy(dx: -paddingX, dy: -paddingY)
+        return expandedBounds.contains(center)
     }
 
     private func targetCanvasPosition(_ point: CGPoint) -> CGPoint {
@@ -1952,6 +2155,11 @@ private struct GraphFileDropOverlay: NSViewRepresentable {
         override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
             let urls = droppedURLs(from: sender)
             guard urls.isEmpty == false else { return false }
+            if enclosingScrollView != nil {
+                let viewportPoint = convert(sender.draggingLocation, from: nil)
+                return onDrop?(urls, viewportPoint) ?? false
+            }
+
             let point = convert(sender.draggingLocation, from: nil)
             let flippedPoint = CGPoint(x: point.x, y: bounds.height - point.y)
             return onDrop?(urls, flippedPoint) ?? false
@@ -2329,6 +2537,22 @@ private struct NodeCardView: View {
         inputValueDraft = ""
     }
 
+    private func prepareForDeletion() {
+        if let editingInputPortID {
+            commitInputValueEditIfNeeded(for: editingInputPortID)
+        }
+        if let editingMacroPortID {
+            commitMacroPortEditIfNeeded(for: editingMacroPortID)
+        }
+        if isEditingTitle {
+            commitTitleEdit()
+        }
+        focusedInputPortID = nil
+        focusedMacroPortID = nil
+        isTitleFieldFocused = false
+        NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+
     private func editableInlinePortIDs() -> [GraphPort.ID] {
         visibleInputPorts.compactMap { port in
             if store.editableFloatUniform(forInputPortID: port.id) != nil { return port.id }
@@ -2368,7 +2592,7 @@ private struct NodeCardView: View {
             Spacer()
 
             switch node.kind {
-            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .depthEstimate, .math, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .note, .transform, .billboard, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .scale, .interpolator, .hold, .trail, .monitor, .layers:
+            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .scale, .interpolator, .hold, .trail, .monitor, .layers:
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
@@ -2389,7 +2613,10 @@ private struct NodeCardView: View {
                     EmptyView()
                 } else {
                     Button(role: .destructive) {
-                        onDelete()
+                        prepareForDeletion()
+                        DispatchQueue.main.async {
+                            onDelete()
+                        }
                     } label: {
                         Image(systemName: "trash")
                     }
@@ -2401,7 +2628,10 @@ private struct NodeCardView: View {
                     EmptyView()
                 } else {
                     Button(role: .destructive) {
-                        onDelete()
+                        prepareForDeletion()
+                        DispatchQueue.main.async {
+                            onDelete()
+                        }
                     } label: {
                         Image(systemName: "trash")
                     }
@@ -2970,10 +3200,14 @@ private struct NodeCardView: View {
             return "Gated motion scroll"
         case .zoomGesture:
             return "Two-point zoom"
+        case .trackball:
+            return "Mouse orbit control"
         case .depthEstimate:
             return "Inferred hand depth"
         case .math:
             return "Scalar math"
+        case .expression:
+            return "Scalar formula"
         case .clamp:
             return "Value limiter"
         case .mapRange:
@@ -3044,6 +3278,8 @@ private struct NodeCardView: View {
             return "Rendered text source"
         case .audio:
             return "System audio input"
+        case .beatDetect:
+            return "Kick and snare triggers"
         case .slider:
             return "On-screen slider"
         case .sliderStyle:
@@ -3090,8 +3326,26 @@ private struct NodeCardView: View {
             return "Graph note + overlay"
         case .transform:
             return "Position XYZ, scale, rotate"
+        case .scene3DTransform:
+            return "3D scene transform"
+        case .scene3DRender:
+            return "3D scene renderer"
         case .billboard:
             return "Position XYZ, size, tint"
+        case .line:
+            return "Endpoints, thickness, color"
+        case .scene3DLight:
+            return "Reusable 3D scene light"
+        case .scene3DMaterial:
+            return "Reusable 3D material"
+        case .scene3DPrimitive:
+            return "SceneKit primitive source"
+        case .scene3DText:
+            return "SceneKit 3D text source"
+        case .scene3DModel:
+            return "SceneKit model file source"
+        case .scene3DParticle:
+            return "SceneKit particle emitter"
         case .select:
             return "Choose source A or B"
         case .scalarSwitch:
@@ -3197,11 +3451,15 @@ private struct NodeCardView: View {
             return .cyan
         case .zoomGesture:
             return .blue
+        case .trackball:
+            return .blue
         case .depthEstimate:
             return .teal
         case .keyboard:
             return .blue
         case .math:
+            return .orange
+        case .expression:
             return .orange
         case .clamp:
             return .yellow
@@ -3273,6 +3531,8 @@ private struct NodeCardView: View {
             return .yellow
         case .audio:
             return .pink
+        case .beatDetect:
+            return .pink
         case .slider:
             return .mint
         case .sliderStyle:
@@ -3319,8 +3579,26 @@ private struct NodeCardView: View {
             return .yellow
         case .transform:
             return .cyan
+        case .scene3DTransform:
+            return .blue
+        case .scene3DRender:
+            return .blue
         case .billboard:
             return .pink
+        case .line:
+            return .red
+        case .scene3DLight:
+            return .blue
+        case .scene3DMaterial:
+            return .blue
+        case .scene3DPrimitive:
+            return .blue
+        case .scene3DText:
+            return .blue
+        case .scene3DModel:
+            return .blue
+        case .scene3DParticle:
+            return .blue
         case .select:
             return .mint
         case .scalarSwitch:
@@ -3419,10 +3697,14 @@ struct NodeInspectorControls: View {
                 ScrollGestureNodeEditor(store: store, nodeID: node.id)
             } else if case .zoomGesture = node.kind {
                 ZoomGestureNodeEditor(store: store, nodeID: node.id)
+            } else if case .trackball = node.kind {
+                TrackballNodeEditor(store: store, nodeID: node.id)
             } else if case .depthEstimate = node.kind {
                 DepthEstimateNodeEditor(store: store, nodeID: node.id)
             } else if case .math = node.kind {
                 MathNodeEditor(store: store, nodeID: node.id)
+            } else if case .expression = node.kind {
+                ExpressionNodeEditor(store: store, nodeID: node.id)
             } else if case .clamp = node.kind {
                 ClampNodeEditor(store: store, nodeID: node.id)
             } else if case .mapRange = node.kind {
@@ -3483,6 +3765,8 @@ struct NodeInspectorControls: View {
                 TextImageNodeEditor(store: store, nodeID: node.id)
             } else if case .audio = node.kind {
                 AudioNodeReadout(store: store)
+            } else if case .beatDetect = node.kind {
+                BeatDetectNodeReadout(store: store, nodeID: node.id)
             } else if case .slider = node.kind {
                 SliderNodeEditor(store: store, nodeID: node.id)
             } else if case .sliderStyle = node.kind {
@@ -3529,8 +3813,26 @@ struct NodeInspectorControls: View {
                 NoteNodeEditor(store: store, nodeID: node.id)
             } else if case .transform = node.kind {
                 TransformNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DTransform = node.kind {
+                Scene3DTransformNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DRender = node.kind {
+                Scene3DRenderNodeEditor(store: store, nodeID: node.id)
             } else if case .billboard = node.kind {
                 BillboardNodeEditor(store: store, nodeID: node.id)
+            } else if case .line = node.kind {
+                LineNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DLight = node.kind {
+                Scene3DLightNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DMaterial = node.kind {
+                Scene3DMaterialNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DPrimitive = node.kind {
+                Scene3DPrimitiveNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DText = node.kind {
+                Scene3DTextNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DModel = node.kind {
+                Scene3DModelNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DParticle = node.kind {
+                Scene3DParticleNodeEditor(store: store, nodeID: node.id)
             } else if case .select = node.kind {
                 SelectNodeEditor(store: store, nodeID: node.id)
             } else if case .scalarSwitch = node.kind {
@@ -3679,6 +3981,7 @@ private struct RenderNodePreview: View {
                 configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
                 onMouseChange: store.updateMousePosition,
                 onMouseButtonChange: store.updateMouseButtons,
+                onModifierFlagsChange: store.updatePreviewModifierFlags,
                 onScrollChange: store.updateScrollDelta
             )
             .frame(height: 96)
@@ -3715,6 +4018,7 @@ private struct CompactRenderNodePreview: View {
                 configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
                 onMouseChange: store.updateMousePosition,
                 onMouseButtonChange: store.updateMouseButtons,
+                onModifierFlagsChange: store.updatePreviewModifierFlags,
                 onScrollChange: store.updateScrollDelta
             )
             .frame(height: 84)
@@ -3731,6 +4035,8 @@ private struct AudioNodeReadout: View {
     @ObservedObject var store: GraphStore
 
     var body: some View {
+        let spectrum = store.audioSpectrumValues()
+
         VStack(alignment: .leading, spacing: 8) {
             Text(store.audioStatus)
                 .font(.caption2)
@@ -3748,6 +4054,177 @@ private struct AudioNodeReadout: View {
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.7))
                         .frame(width: 36, alignment: .trailing)
+                }
+            }
+
+            if spectrum.isEmpty == false {
+                HStack {
+                    Text("Spectrum")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.78))
+                    Spacer()
+                    Text("\(store.audioSpectrumBandCount) bands")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+
+                AudioSpectrumStrip(values: spectrum)
+                    .frame(height: 42)
+            }
+        }
+    }
+}
+
+private struct BeatDetectNodeReadout: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forBeatDetectNodeID: nodeID)
+        let kick = store.beatDetectValue(for: nodeID, outputName: "Kick") ?? 0
+        let snare = store.beatDetectValue(for: nodeID, outputName: "Snare") ?? 0
+        let kickLevel = store.beatDetectValue(for: nodeID, outputName: "Kick Level") ?? 0
+        let snareLevel = store.beatDetectValue(for: nodeID, outputName: "Snare Level") ?? 0
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Detects one-frame kick and snare hits from the live audio input. Lower Threshold to catch more hits, or raise Sensitivity to amplify the detector before the threshold.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.68))
+
+            LabeledSlider(
+                title: "Kick Threshold",
+                value: Binding(
+                    get: { settings.kickThreshold },
+                    set: { newValue in
+                        store.updateBeatDetectNodeSettings(nodeID) { $0.kickThreshold = newValue }
+                    }
+                ),
+                range: 0...2
+            )
+
+            LabeledSlider(
+                title: "Kick Sensitivity",
+                value: Binding(
+                    get: { settings.kickSensitivity },
+                    set: { newValue in
+                        store.updateBeatDetectNodeSettings(nodeID) { $0.kickSensitivity = newValue }
+                    }
+                ),
+                range: 0.1...4
+            )
+
+            LabeledSlider(
+                title: "Snare Threshold",
+                value: Binding(
+                    get: { settings.snareThreshold },
+                    set: { newValue in
+                        store.updateBeatDetectNodeSettings(nodeID) { $0.snareThreshold = newValue }
+                    }
+                ),
+                range: 0...2
+            )
+
+            LabeledSlider(
+                title: "Snare Sensitivity",
+                value: Binding(
+                    get: { settings.snareSensitivity },
+                    set: { newValue in
+                        store.updateBeatDetectNodeSettings(nodeID) { $0.snareSensitivity = newValue }
+                    }
+                ),
+                range: 0.1...4
+            )
+
+            HStack {
+                Text("Kick")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(kick >= 0.5 ? "Hit" : "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(kick >= 0.5 ? .green : .white.opacity(0.85))
+            }
+
+            HStack {
+                Text("Snare")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(snare >= 0.5 ? "Hit" : "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(snare >= 0.5 ? .orange : .white.opacity(0.85))
+            }
+
+            HStack {
+                Text("Kick Level")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(String(format: "%.2f", kickLevel))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Snare Level")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(String(format: "%.2f", snareLevel))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+    }
+}
+
+private struct AudioSpectrumStrip: View {
+    let values: [Double]
+
+    private var sampledValues: [Double] {
+        let targetCount = min(64, max(values.count, 1))
+        guard values.count > targetCount else { return values }
+        return (0..<targetCount).map { index in
+            let start = (index * values.count) / targetCount
+            let end = max(start + 1, ((index + 1) * values.count) / targetCount)
+            let slice = values[start..<min(end, values.count)]
+            return slice.max() ?? 0.0
+        }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let bars = sampledValues
+            let count = max(bars.count, 1)
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.white.opacity(0.05))
+
+                Canvas { context, canvasSize in
+                    let drawWidth = canvasSize.width / CGFloat(count)
+                    let gradient = Gradient(colors: [
+                        Color.cyan.opacity(0.9),
+                        Color.pink.opacity(0.95)
+                    ])
+
+                    for (index, value) in bars.enumerated() {
+                        let clamped = max(0.0, min(1.0, value))
+                        let height = max(1, canvasSize.height * clamped)
+                        let rect = CGRect(
+                            x: CGFloat(index) * drawWidth,
+                            y: canvasSize.height - height,
+                            width: max(1, drawWidth - 1),
+                            height: height
+                        )
+                        context.fill(
+                            Path(roundedRect: rect, cornerRadius: 1.5),
+                            with: .linearGradient(
+                                gradient,
+                                startPoint: CGPoint(x: rect.midX, y: rect.maxY),
+                                endPoint: CGPoint(x: rect.midX, y: rect.minY)
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -4751,6 +5228,212 @@ private struct ZoomGestureNodeEditor: View {
     }
 }
 
+private struct TrackballNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forTrackballNodeID: nodeID)
+        let orbit = store.scalarOutputValue(forNodeID: nodeID, outputName: "Orbit")
+        let pitch = store.scalarOutputValue(forNodeID: nodeID, outputName: "Pitch")
+        let panX = store.scalarOutputValue(forNodeID: nodeID, outputName: "Pan X")
+        let panY = store.scalarOutputValue(forNodeID: nodeID, outputName: "Pan Y")
+        let distance = store.scalarOutputValue(forNodeID: nodeID, outputName: "Distance")
+        let rotationX = store.scalarOutputValue(forNodeID: nodeID, outputName: "Rotation X")
+        let rotationY = store.scalarOutputValue(forNodeID: nodeID, outputName: "Rotation Y")
+        let dragging = store.scalarOutputValue(forNodeID: nodeID, outputName: "Dragging") ?? 0.0
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Drag over a live preview. Plain drag updates orbit and object rotation. Option-Shift drag pans. Scroll changes distance.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.68))
+
+            LabeledSlider(
+                title: "Sensitivity",
+                value: Binding(
+                    get: { settings.sensitivity },
+                    set: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.sensitivity = newValue }
+                    }
+                ),
+                range: 0.1...4
+            )
+
+            LabeledSlider(
+                title: "Pan Sensitivity",
+                value: Binding(
+                    get: { settings.panSensitivity },
+                    set: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.panSensitivity = newValue }
+                    }
+                ),
+                range: 0.1...20
+            )
+
+            LabeledSlider(
+                title: "Zoom Sensitivity",
+                value: Binding(
+                    get: { settings.zoomSensitivity },
+                    set: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.zoomSensitivity = newValue }
+                    }
+                ),
+                range: 0.05...10
+            )
+
+            Toggle(
+                "Invert Y",
+                isOn: Binding(
+                    get: { settings.invertY },
+                    set: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.invertY = newValue }
+                    }
+                )
+            )
+            .toggleStyle(.switch)
+            .font(.caption2)
+
+            HStack(spacing: 8) {
+                NumericField(
+                    title: "Start Orbit",
+                    value: settings.initialOrbit,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.initialOrbit = newValue }
+                    }
+                )
+                NumericField(
+                    title: "Start Pitch",
+                    value: settings.initialPitch,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.initialPitch = newValue }
+                    }
+                )
+            }
+
+            HStack(spacing: 8) {
+                NumericField(
+                    title: "Start Distance",
+                    value: settings.initialDistance,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.initialDistance = newValue }
+                    }
+                )
+                NumericField(
+                    title: "Min Distance",
+                    value: settings.minDistance,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.minDistance = newValue }
+                    }
+                )
+                NumericField(
+                    title: "Max Distance",
+                    value: settings.maxDistance,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.maxDistance = newValue }
+                    }
+                )
+            }
+
+            HStack(spacing: 8) {
+                NumericField(
+                    title: "Start Pan X",
+                    value: settings.initialPanX,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.initialPanX = newValue }
+                    }
+                )
+                NumericField(
+                    title: "Start Pan Y",
+                    value: settings.initialPanY,
+                    onSubmit: { newValue in
+                        store.updateTrackballNodeSettings(nodeID) { $0.initialPanY = newValue }
+                    }
+                )
+            }
+
+            HStack {
+                Text("Orbit")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(orbit.map { String(format: "%.2f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Pitch")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(pitch.map { String(format: "%.2f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Pan X")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(panX.map { String(format: "%.3f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Pan Y")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(panY.map { String(format: "%.3f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Distance")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(distance.map { String(format: "%.3f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Rotation X")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(rotationX.map { String(format: "%.2f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Rotation Y")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(rotationY.map { String(format: "%.2f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+
+            HStack {
+                Text("Dragging")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(dragging >= 0.5 ? "1" : "0")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(dragging >= 0.5 ? .green : .white.opacity(0.85))
+            }
+        }
+    }
+}
+
 private struct DepthEstimateNodeEditor: View {
     @ObservedObject var store: GraphStore
     let nodeID: GraphNode.ID
@@ -4859,7 +5542,7 @@ private struct MathNodeEditor: View {
         let result = store.scalarOutputValue(forNodeID: nodeID, outputName: "Result")
 
         VStack(alignment: .leading, spacing: 8) {
-            Text("Applies a scalar math operation to inputs A and B.")
+            Text("Applies scalar math to A and B, with unary modes like sin, cos, round, floor, and ceil using only A.")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.68))
 
@@ -4877,6 +5560,69 @@ private struct MathNodeEditor: View {
                 }
             }
             .pickerStyle(.menu)
+
+            HStack {
+                Text("Result")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+                Spacer()
+                Text(result.map { String(format: "%.3f", $0) } ?? "--")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+    }
+}
+
+private struct ExpressionNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forExpressionNodeID: nodeID)
+        let result = store.scalarOutputValue(forNodeID: nodeID, outputName: "Result")
+        let variableNames = settings.variables.keys.sorted()
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Writes a scalar formula with named inputs. Good for circle math, offsets, and quick debug formulas in normalized 0 to 1 space.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.68))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Expression")
+                    .font(.caption.weight(.semibold))
+
+                TextEditor(
+                    text: Binding(
+                        get: { settings.expression },
+                        set: { newValue in
+                            store.updateExpressionNodeSettings(nodeID) { $0.expression = newValue }
+                        }
+                    )
+                )
+                .font(.system(.caption, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .frame(minHeight: 48)
+                .padding(6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+            }
+
+            Text("Functions: sin cos tan abs sqrt min max clamp floor ceil round pow. Constants: pi, tau. Center is usually 0.5, 0.5.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.6))
+
+            ForEach(variableNames, id: \.self) { name in
+                NumericField(title: name, value: settings.variables[name] ?? 0.0) { newValue in
+                    store.updateExpressionNodeSettings(nodeID) { $0.variables[name] = newValue }
+                }
+            }
 
             HStack {
                 Text("Result")
@@ -6824,6 +7570,7 @@ private struct VideoPlayerNodeEditor: View {
                 Button("Stop") {
                     store.updateVideoPlayerNodeSettings(nodeID) { current in
                         current.isPlaying = false
+                        current.seekPosition = 0
                     }
                     store.seekVideoPlayerNode(nodeID, toNormalizedTime: 0)
                 }
@@ -6838,6 +7585,14 @@ private struct VideoPlayerNodeEditor: View {
             ))
             .toggleStyle(.switch)
 
+            Toggle("Play", isOn: Binding(
+                get: { settings.isPlaying },
+                set: { newValue in
+                    store.updateVideoPlayerNodeSettings(nodeID) { $0.isPlaying = newValue }
+                }
+            ))
+            .toggleStyle(.switch)
+
             LabeledSlider(
                 title: "Rate",
                 value: Binding(
@@ -6847,6 +7602,17 @@ private struct VideoPlayerNodeEditor: View {
                     }
                 ),
                 range: 0...4
+            )
+
+            LabeledSlider(
+                title: "Seek",
+                value: Binding(
+                    get: { settings.seekPosition },
+                    set: { newValue in
+                        store.updateVideoPlayerNodeSettings(nodeID) { $0.seekPosition = newValue }
+                    }
+                ),
+                range: 0...1
             )
 
             Text(settings.filename)
@@ -6886,7 +7652,7 @@ private struct SliderNodeEditor: View {
                         store.updateSliderNodeSettings(nodeID) { $0.min = newValue }
                     }
                 ),
-                range: -20...20
+                range: -50...50
             )
             LabeledSlider(
                 title: "Max",
@@ -6896,7 +7662,7 @@ private struct SliderNodeEditor: View {
                         store.updateSliderNodeSettings(nodeID) { $0.max = newValue }
                     }
                 ),
-                range: -20...20
+                range: -50...50
             )
             LabeledSlider(
                 title: "Value",
@@ -7367,7 +8133,7 @@ private struct ScaleNodeEditor: View {
                         store.updateScaleNodeSettings(nodeID) { $0.scaledMin = newValue }
                     }
                 ),
-                range: -20...20
+                range: -50...50
             )
             LabeledSlider(
                 title: "Scaled Max",
@@ -8138,7 +8904,7 @@ private struct FeedbackNodeEditor: View {
                         store.updateFeedbackNodeSettings(nodeID) { $0.level = newValue }
                     }
                 ),
-                range: 0.0...0.99
+                range: 0.0...0.999
             )
 
             Picker("Blend", selection: Binding(
@@ -8153,7 +8919,7 @@ private struct FeedbackNodeEditor: View {
             }
             .pickerStyle(.segmented)
 
-            Text("Feedback uses the previous frame of this node. Add is bright, Screen is softer, Multiply is darker.")
+            Text("Feedback uses the previous frame of this node. Higher values keep longer trails; Add is bright, Screen is softer, Multiply is darker.")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.68))
         }
@@ -8211,29 +8977,6 @@ private struct TransformNodeEditor: View {
                         }
                     ),
                     range: 0.05...2.0
-                )
-            }
-
-            HStack(spacing: 8) {
-                LabeledSlider(
-                    title: "Rot X",
-                    value: Binding(
-                        get: { settings.rotationX },
-                        set: { newValue in
-                            store.updateTransformNodeSettings(nodeID) { $0.rotationX = newValue }
-                        }
-                    ),
-                    range: -180...180
-                )
-                LabeledSlider(
-                    title: "Rot Y",
-                    value: Binding(
-                        get: { settings.rotationY },
-                        set: { newValue in
-                            store.updateTransformNodeSettings(nodeID) { $0.rotationY = newValue }
-                        }
-                    ),
-                    range: -180...180
                 )
             }
 
@@ -8387,6 +9130,957 @@ private struct BillboardNodeEditor: View {
                     set: { newValue in
                         let components = rgbaComponents(from: newValue)
                         store.updateBillboardNodeSettings(nodeID) { settings in
+                            settings.red = components.red
+                            settings.green = components.green
+                            settings.blue = components.blue
+                            settings.alpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+        }
+    }
+}
+
+private struct LineNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forLineNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                LabeledSlider(
+                    title: "X1",
+                    value: Binding(
+                        get: { settings.x1 },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.x1 = newValue }
+                        }
+                    ),
+                    range: -1...2
+                )
+                LabeledSlider(
+                    title: "Y1",
+                    value: Binding(
+                        get: { settings.y1 },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.y1 = newValue }
+                        }
+                    ),
+                    range: -1...2
+                )
+            }
+
+            HStack(spacing: 8) {
+                LabeledSlider(
+                    title: "X2",
+                    value: Binding(
+                        get: { settings.x2 },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.x2 = newValue }
+                        }
+                    ),
+                    range: -1...2
+                )
+                LabeledSlider(
+                    title: "Y2",
+                    value: Binding(
+                        get: { settings.y2 },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.y2 = newValue }
+                        }
+                    ),
+                    range: -1...2
+                )
+            }
+
+            HStack(spacing: 8) {
+                LabeledSlider(
+                    title: "Thickness",
+                    value: Binding(
+                        get: { settings.thickness },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.thickness = newValue }
+                        }
+                    ),
+                    range: 0.001...0.2
+                )
+                LabeledSlider(
+                    title: "Opacity",
+                    value: Binding(
+                        get: { settings.opacity },
+                        set: { newValue in
+                            store.updateLineNodeSettings(nodeID) { $0.opacity = newValue }
+                        }
+                    ),
+                    range: 0...1
+                )
+            }
+
+            LabeledSlider(
+                title: "Z",
+                value: Binding(
+                    get: { settings.z },
+                    set: { newValue in
+                        store.updateLineNodeSettings(nodeID) { $0.z = newValue }
+                    }
+                ),
+                range: -20...20
+            )
+
+            ColorPicker(
+                "Color",
+                selection: Binding(
+                    get: {
+                        Color(
+                            red: settings.red,
+                            green: settings.green,
+                            blue: settings.blue,
+                            opacity: settings.alpha
+                        )
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateLineNodeSettings(nodeID) { settings in
+                            settings.red = components.red
+                            settings.green = components.green
+                            settings.blue = components.blue
+                            settings.alpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+        }
+    }
+}
+
+private struct Scene3DPrimitiveNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DPrimitiveSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Primitive", selection: Binding(
+                get: { settings.primitive },
+                set: { newValue in
+                    store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.primitive = newValue }
+                }
+            )) {
+                ForEach(Scene3DPrimitiveKind.allCases) { primitive in
+                    Text(primitive.label).tag(primitive)
+                }
+            }
+            .pickerStyle(.menu)
+
+            LabeledSlider(
+                title: "Pos X",
+                value: Binding(
+                    get: { settings.positionX },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.positionX = newValue }
+                    }
+                ),
+                range: -20...20
+            )
+
+            LabeledSlider(
+                title: "Pos Y",
+                value: Binding(
+                    get: { settings.positionY },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.positionY = newValue }
+                    }
+                ),
+                range: -20...20
+            )
+
+            LabeledSlider(
+                title: "Pos Z",
+                value: Binding(
+                    get: { settings.positionZ },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.positionZ = newValue }
+                    }
+                ),
+                range: -20...20
+            )
+
+            LabeledSlider(
+                title: "Rot X",
+                value: Binding(
+                    get: { settings.rotationX },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.rotationX = newValue }
+                    }
+                ),
+                range: -180...180
+            )
+
+            LabeledSlider(
+                title: "Rot Y",
+                value: Binding(
+                    get: { settings.rotationY },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.rotationY = newValue }
+                    }
+                ),
+                range: -180...180
+            )
+
+            LabeledSlider(
+                title: "Rot Z",
+                value: Binding(
+                    get: { settings.rotationZ },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.rotationZ = newValue }
+                    }
+                ),
+                range: -180...180
+            )
+
+            LabeledSlider(
+                title: "Scale",
+                value: Binding(
+                    get: { settings.scale },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.scale = newValue }
+                    }
+                ),
+                range: 0.05...4
+            )
+
+            LabeledSlider(
+                title: "Light",
+                value: Binding(
+                    get: { settings.lightIntensity },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.lightIntensity = newValue }
+                    }
+                ),
+                range: 0...4000
+            )
+
+            ColorPicker(
+                "Material",
+                selection: Binding(
+                    get: {
+                        Color(
+                            red: settings.materialRed,
+                            green: settings.materialGreen,
+                            blue: settings.materialBlue,
+                            opacity: settings.materialAlpha
+                        )
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { settings in
+                            settings.materialRed = components.red
+                            settings.materialGreen = components.green
+                            settings.materialBlue = components.blue
+                            settings.materialAlpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+
+            LabeledSlider(
+                title: "Red",
+                value: Binding(
+                    get: { settings.materialRed },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.materialRed = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Green",
+                value: Binding(
+                    get: { settings.materialGreen },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.materialGreen = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Blue",
+                value: Binding(
+                    get: { settings.materialBlue },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.materialBlue = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Alpha",
+                value: Binding(
+                    get: { settings.materialAlpha },
+                    set: { newValue in
+                        store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.materialAlpha = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+        }
+    }
+}
+
+private struct Scene3DMaterialNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DMaterialSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            ColorPicker(
+                "Base Color",
+                selection: Binding(
+                    get: {
+                        Color(
+                            red: settings.red,
+                            green: settings.green,
+                            blue: settings.blue,
+                            opacity: settings.alpha
+                        )
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateScene3DMaterialNodeSettings(nodeID) { settings in
+                            settings.red = components.red
+                            settings.green = components.green
+                            settings.blue = components.blue
+                            settings.alpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+
+            LabeledSlider(title: "Opacity", value: Binding(
+                get: { settings.alpha },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.alpha = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Metallic", value: Binding(
+                get: { settings.metallic },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.metallic = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Roughness", value: Binding(
+                get: { settings.roughness },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.roughness = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Emission", value: Binding(
+                get: { settings.emission },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.emission = newValue }
+                }
+            ), range: 0...1)
+
+            Toggle("Double Sided", isOn: Binding(
+                get: { settings.doubleSided },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.doubleSided = newValue }
+                }
+            ))
+            .font(.caption)
+        }
+    }
+}
+
+private struct Scene3DTransformNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forScene3DTransformNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            LabeledSlider(title: "X", value: Binding(
+                get: { settings.x },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.x = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Y", value: Binding(
+                get: { settings.y },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.y = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Z", value: Binding(
+                get: { settings.z },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.z = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Scale X", value: Binding(
+                get: { settings.scaleX },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.scaleX = newValue }
+                }
+            ), range: 0.01...10)
+
+            LabeledSlider(title: "Scale Y", value: Binding(
+                get: { settings.scaleY },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.scaleY = newValue }
+                }
+            ), range: 0.01...10)
+
+            LabeledSlider(title: "Scale Z", value: Binding(
+                get: { settings.scaleZ },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.scaleZ = newValue }
+                }
+            ), range: 0.01...10)
+
+            LabeledSlider(title: "Rotation X", value: Binding(
+                get: { settings.rotationX },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.rotationX = newValue }
+                }
+            ), range: -360...360)
+
+            LabeledSlider(title: "Rotation Y", value: Binding(
+                get: { settings.rotationY },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.rotationY = newValue }
+                }
+            ), range: -360...360)
+
+            LabeledSlider(title: "Rotation Z", value: Binding(
+                get: { settings.rotationZ },
+                set: { newValue in
+                    store.updateScene3DTransformNodeSettings(nodeID) { $0.rotationZ = newValue }
+                }
+            ), range: -360...360)
+        }
+    }
+}
+
+private struct Scene3DRenderNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forScene3DRenderNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            NumericField(
+                title: "Scene Count",
+                value: Double(settings.sceneCount),
+                onSubmit: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { settings in
+                        settings.sceneCount = max(1, Int(newValue.rounded()))
+                    }
+                }
+            )
+
+            LabeledSlider(title: "Camera Distance", value: Binding(
+                get: { settings.cameraDistance },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraDistance = newValue }
+                }
+            ), range: 0.1...30)
+
+            LabeledSlider(title: "Orbit", value: Binding(
+                get: { settings.cameraOrbit },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraOrbit = newValue }
+                }
+            ), range: -360...360)
+
+            LabeledSlider(title: "Pitch", value: Binding(
+                get: { settings.cameraPitch },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraPitch = newValue }
+                }
+            ), range: -360...360)
+
+            LabeledSlider(title: "Pan X", value: Binding(
+                get: { settings.cameraPanX },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraPanX = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Pan Y", value: Binding(
+                get: { settings.cameraPanY },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraPanY = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Background Alpha", value: Binding(
+                get: { settings.backgroundAlpha },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.backgroundAlpha = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Default Light", value: Binding(
+                get: { settings.defaultLightIntensity },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.defaultLightIntensity = newValue }
+                }
+            ), range: 0...2000)
+        }
+    }
+}
+
+private struct Scene3DLightNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DLightSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Type")
+                    .font(.caption.weight(.semibold))
+
+                Picker("Type", selection: Binding(
+                    get: { settings.type },
+                    set: { newValue in
+                        store.updateScene3DLightNodeSettings(nodeID) { $0.type = newValue }
+                    }
+                )) {
+                    ForEach(Scene3DLightType.allCases) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+
+            ColorPicker(
+                "Color",
+                selection: Binding(
+                    get: {
+                        Color(
+                            red: settings.red,
+                            green: settings.green,
+                            blue: settings.blue,
+                            opacity: settings.alpha
+                        )
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateScene3DLightNodeSettings(nodeID) { settings in
+                            settings.red = components.red
+                            settings.green = components.green
+                            settings.blue = components.blue
+                            settings.alpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+
+            LabeledSlider(title: "Intensity", value: Binding(
+                get: { settings.intensity },
+                set: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.intensity = newValue }
+                }
+            ), range: 0...4000)
+
+            Text("Position")
+                .font(.caption.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 6) {
+                NumericField(title: "X", value: settings.positionX, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.positionX = newValue }
+                })
+                NumericField(title: "Y", value: settings.positionY, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.positionY = newValue }
+                })
+                NumericField(title: "Z", value: settings.positionZ, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.positionZ = newValue }
+                })
+            }
+
+            Text("Rotation")
+                .font(.caption.weight(.semibold))
+
+            VStack(alignment: .leading, spacing: 6) {
+                NumericField(title: "Rotation X", value: settings.rotationX, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.rotationX = newValue }
+                })
+                NumericField(title: "Rotation Y", value: settings.rotationY, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.rotationY = newValue }
+                })
+                NumericField(title: "Rotation Z", value: settings.rotationZ, onSubmit: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.rotationZ = newValue }
+                })
+            }
+
+            if settings.type == .spot {
+                LabeledSlider(title: "Inner Spot", value: Binding(
+                    get: { settings.innerSpotAngle },
+                    set: { newValue in
+                        store.updateScene3DLightNodeSettings(nodeID) { $0.innerSpotAngle = newValue }
+                    }
+                ), range: 0...90)
+
+                LabeledSlider(title: "Outer Spot", value: Binding(
+                    get: { settings.outerSpotAngle },
+                    set: { newValue in
+                        store.updateScene3DLightNodeSettings(nodeID) { $0.outerSpotAngle = newValue }
+                    }
+                ), range: 0...120)
+            }
+
+            Toggle("Cast Shadow", isOn: Binding(
+                get: { settings.castsShadow },
+                set: { newValue in
+                    store.updateScene3DLightNodeSettings(nodeID) { $0.castsShadow = newValue }
+                }
+            ))
+            .font(.caption)
+        }
+    }
+}
+
+private struct Scene3DTextNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    private let fonts: [(name: String, label: String)] = [
+        ("", "System Bold"),
+        ("Helvetica Neue", "Helvetica Neue"),
+        ("Avenir Next", "Avenir Next"),
+        ("Futura", "Futura"),
+        ("Menlo", "Menlo"),
+        ("Times New Roman", "Times New Roman")
+    ]
+
+    var body: some View {
+        let settings = store.resolvedScene3DTextSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Text", text: Binding(
+                get: { settings.text },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.text = newValue }
+                }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.caption)
+
+            Picker("Font", selection: Binding(
+                get: { settings.fontName },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.fontName = newValue }
+                }
+            )) {
+                ForEach(fonts, id: \.name) { font in
+                    Text(font.label).tag(font.name)
+                }
+            }
+            .pickerStyle(.menu)
+
+            LabeledSlider(title: "Font Size", value: Binding(
+                get: { settings.fontSize },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.fontSize = newValue }
+                }
+            ), range: 0.1...6)
+
+            LabeledSlider(title: "Extrusion", value: Binding(
+                get: { settings.extrusionDepth },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.extrusionDepth = newValue }
+                }
+            ), range: 0.01...2)
+
+            LabeledSlider(title: "Chamfer", value: Binding(
+                get: { settings.chamferRadius },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.chamferRadius = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Pos X", value: Binding(
+                get: { settings.positionX },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.positionX = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Pos Y", value: Binding(
+                get: { settings.positionY },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.positionY = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Pos Z", value: Binding(
+                get: { settings.positionZ },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.positionZ = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Rot X", value: Binding(
+                get: { settings.rotationX },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.rotationX = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Rot Y", value: Binding(
+                get: { settings.rotationY },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.rotationY = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Rot Z", value: Binding(
+                get: { settings.rotationZ },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.rotationZ = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Scale", value: Binding(
+                get: { settings.scale },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.scale = newValue }
+                }
+            ), range: 0.05...4)
+
+            LabeledSlider(title: "Light", value: Binding(
+                get: { settings.lightIntensity },
+                set: { newValue in
+                    store.updateScene3DTextNodeSettings(nodeID) { $0.lightIntensity = newValue }
+                }
+            ), range: 0...4000)
+
+            ColorPicker("Material", selection: Binding(
+                get: {
+                    Color(
+                        red: settings.materialRed,
+                        green: settings.materialGreen,
+                        blue: settings.materialBlue,
+                        opacity: settings.materialAlpha
+                    )
+                },
+                set: { newValue in
+                    let components = rgbaComponents(from: newValue)
+                    store.updateScene3DTextNodeSettings(nodeID) { settings in
+                        settings.materialRed = components.red
+                        settings.materialGreen = components.green
+                        settings.materialBlue = components.blue
+                        settings.materialAlpha = components.alpha
+                    }
+                }
+            ), supportsOpacity: true)
+            .font(.caption.weight(.semibold))
+        }
+    }
+}
+
+private struct Scene3DModelNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DModelSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                store.openScene3DModelPicker(for: nodeID)
+            } label: {
+                Text(settings.bookmarkData.isEmpty ? "Choose Model..." : "Replace Model...")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+
+            Text(settings.filename)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+
+            LabeledSlider(title: "Pos X", value: Binding(
+                get: { settings.positionX },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.positionX = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Pos Y", value: Binding(
+                get: { settings.positionY },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.positionY = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Pos Z", value: Binding(
+                get: { settings.positionZ },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.positionZ = newValue }
+                }
+            ), range: -50...50)
+
+            LabeledSlider(title: "Rot X", value: Binding(
+                get: { settings.rotationX },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.rotationX = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Rot Y", value: Binding(
+                get: { settings.rotationY },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.rotationY = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Rot Z", value: Binding(
+                get: { settings.rotationZ },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.rotationZ = newValue }
+                }
+            ), range: -180...180)
+
+            LabeledSlider(title: "Scale", value: Binding(
+                get: { settings.scale },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.scale = newValue }
+                }
+            ), range: 0.01...20)
+
+            LabeledSlider(title: "Light", value: Binding(
+                get: { settings.lightIntensity },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.lightIntensity = newValue }
+                }
+            ), range: 0...4000)
+
+            Toggle("Play Animation", isOn: Binding(
+                get: { settings.animationPlay >= 0.5 },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.animationPlay = newValue ? 1.0 : 0.0 }
+                }
+            ))
+            .font(.caption)
+
+            LabeledSlider(title: "Clip Start", value: Binding(
+                get: { settings.animationClipStart },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.animationClipStart = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Clip End", value: Binding(
+                get: { settings.animationClipEnd },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.animationClipEnd = newValue }
+                }
+            ), range: 0...1)
+
+            LabeledSlider(title: "Anim Speed", value: Binding(
+                get: { settings.animationSpeed },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.animationSpeed = newValue }
+                }
+            ), range: 0...4)
+
+            Toggle("Loop Animation", isOn: Binding(
+                get: { settings.animationLoops },
+                set: { newValue in
+                    store.updateScene3DModelNodeSettings(nodeID) { $0.animationLoops = newValue }
+                }
+            ))
+            .font(.caption)
+        }
+    }
+}
+
+private struct Scene3DParticleNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DParticleSettings(forNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Emitter", selection: Binding(
+                get: { settings.shape },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.shape = newValue }
+                }
+            )) {
+                ForEach(Scene3DParticleShape.allCases) { shape in
+                    Text(shape.label).tag(shape)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Picker("Blend", selection: Binding(
+                get: { settings.blendMode },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.blendMode = newValue }
+                }
+            )) {
+                ForEach(Scene3DParticleBlendMode.allCases) { blendMode in
+                    Text(blendMode.label).tag(blendMode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            LabeledSlider(title: "Pos X", value: Binding(get: { settings.positionX }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionX = newValue } }), range: -50...50)
+            LabeledSlider(title: "Pos Y", value: Binding(get: { settings.positionY }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionY = newValue } }), range: -50...50)
+            LabeledSlider(title: "Pos Z", value: Binding(get: { settings.positionZ }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionZ = newValue } }), range: -50...50)
+            LabeledSlider(title: "Scale", value: Binding(get: { settings.scale }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.scale = newValue } }), range: 0.01...20)
+            LabeledSlider(title: "Count", value: Binding(get: { settings.particleCount }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.particleCount = newValue } }), range: 0...100_000)
+            LabeledSlider(title: "Birth Rate", value: Binding(get: { settings.birthRate }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.birthRate = newValue } }), range: 0...5000)
+            LabeledSlider(title: "Lifetime", value: Binding(get: { settings.lifetime }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.lifetime = newValue } }), range: 0.05...20)
+            LabeledSlider(title: "Speed", value: Binding(get: { settings.speed }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.speed = newValue } }), range: 0...20)
+            LabeledSlider(title: "Spread", value: Binding(get: { settings.spread }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spread = newValue } }), range: 0...180)
+            LabeledSlider(title: "Size", value: Binding(get: { settings.size }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.size = newValue } }), range: 0.001...1)
+            LabeledSlider(title: "Gravity Y", value: Binding(get: { settings.gravityY }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.gravityY = newValue } }), range: -20...20)
+
+            ColorPicker(
+                "Color",
+                selection: Binding(
+                    get: {
+                        Color(red: settings.red, green: settings.green, blue: settings.blue, opacity: settings.alpha)
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateScene3DParticleNodeSettings(nodeID) { settings in
                             settings.red = components.red
                             settings.green = components.green
                             settings.blue = components.blue
