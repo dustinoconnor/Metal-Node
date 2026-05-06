@@ -43,6 +43,11 @@ enum InspectorFocusTarget: Equatable {
     case nodeLibrary
 }
 
+enum GraphExecutionState: Equatable {
+    case running
+    case paused
+}
+
 enum LibraryCoreNodeType: Identifiable {
     case time
     case mouse
@@ -115,6 +120,17 @@ enum LibraryCoreNodeType: Identifiable {
     case iteratorVariables
     case midiOut
     case midiCC
+    case midiCCInput
+    case midiNoteInput
+    case oscInput
+    case oscOutput
+    case oscReceive
+    case oscSend
+    case oscGet4
+    case oscGetArray
+    case oscMake4
+    case oscMakeArray
+    case oscBundle
     case note
     case transform
     case billboard
@@ -126,7 +142,10 @@ enum LibraryCoreNodeType: Identifiable {
     case scene3DPrimitive
     case scene3DText
     case scene3DModel
+    case scene3DGaussianSplat
     case scene3DParticle
+    case scene3DFishSchool
+    case scene3DDustHaze
     case select
     case scalarSwitch
     case stringSwitch
@@ -154,6 +173,7 @@ enum LibraryCoreNodeType: Identifiable {
     case scale
     case interpolator
     case hold
+    case scalarSmooth
     case trail
     case monitor
     case mix
@@ -336,6 +356,28 @@ enum LibraryCoreNodeType: Identifiable {
             return "midiOut"
         case .midiCC:
             return "midiCC"
+        case .midiCCInput:
+            return "midiCCInput"
+        case .midiNoteInput:
+            return "midiNoteInput"
+        case .oscInput:
+            return "oscInput"
+        case .oscOutput:
+            return "oscOutput"
+        case .oscReceive:
+            return "oscReceive"
+        case .oscSend:
+            return "oscSend"
+        case .oscGet4:
+            return "oscGet4"
+        case .oscGetArray:
+            return "oscGetArray"
+        case .oscMake4:
+            return "oscMake4"
+        case .oscMakeArray:
+            return "oscMakeArray"
+        case .oscBundle:
+            return "oscBundle"
         case .note:
             return "note"
         case .transform:
@@ -358,8 +400,14 @@ enum LibraryCoreNodeType: Identifiable {
             return "scene3DText"
         case .scene3DModel:
             return "scene3DModel"
+        case .scene3DGaussianSplat:
+            return "scene3DGaussianSplat"
         case .scene3DParticle:
             return "scene3DParticle"
+        case .scene3DFishSchool:
+            return "scene3DFishSchool"
+        case .scene3DDustHaze:
+            return "scene3DDustHaze"
         case .select:
             return "select"
         case .scalarSwitch:
@@ -414,6 +462,8 @@ enum LibraryCoreNodeType: Identifiable {
             return "interpolator"
         case .hold:
             return "hold"
+        case .scalarSmooth:
+            return "scalarSmooth"
         case .trail:
             return "trail"
         case .monitor:
@@ -502,8 +552,17 @@ final class GraphStore: ObservableObject {
         commandTargetStore = store
     }
 
+    static func clearCommandTargetStore(if store: GraphStore) {
+        if commandTargetStore === store {
+            commandTargetStore = nil
+        }
+    }
+
     static var activeCommandTargetStore: GraphStore? {
-        commandTargetStore
+        guard let commandTargetStore, commandTargetStore.isGraphWindowVisible else {
+            return nil
+        }
+        return commandTargetStore
     }
 
     struct CustomFragmentPreset: Codable, Identifiable, Equatable {
@@ -524,6 +583,25 @@ final class GraphStore: ObservableObject {
         var currentValue = "-"
     }
 
+    private struct MIDIInputCCNodeRuntimeState: Equatable {
+        var lastEventID: UInt64?
+        var triggerFrame: Int?
+    }
+
+    private struct MIDIInputNoteNodeRuntimeState: Equatable {
+        var lastEventID: UInt64?
+        var triggerFrame: Int?
+    }
+
+    private struct OSCInputNodeRuntimeState: Equatable {
+        var lastEventID: UInt64?
+        var triggerFrame: Int?
+    }
+
+    private struct OSCOutputNodeRuntimeState: Equatable {
+        var lastSignature = ""
+    }
+
     private struct MIDINodeRuntimeState: Equatable {
         var activeNote: ActiveMIDINote?
         var currentNoteName = "-"
@@ -531,6 +609,11 @@ final class GraphStore: ObservableObject {
 
     private struct HoldNodeRuntimeState: Equatable {
         var heldValue: Double
+    }
+
+    private struct ScalarSmoothNodeRuntimeState: Equatable {
+        var value: Double
+        var velocity: Double = 0.0
     }
 
     private struct RandomNodeRuntimeState: Equatable {
@@ -597,6 +680,7 @@ final class GraphStore: ObservableObject {
         var distance: Double = 6.0
         var lastScrollPosition = CGPoint.zero
         var isDragging = false
+        var lastDistanceScrollTime: CFTimeInterval?
     }
 
     private struct DepthEstimateNodeRuntimeState: Equatable {
@@ -648,6 +732,7 @@ final class GraphStore: ObservableObject {
         let scaleSettings: ScaleNodeSettings?
         let interpolatorSettings: InterpolatorNodeSettings?
         let holdSettings: HoldNodeSettings?
+        let scalarSmoothSettings: ScalarSmoothNodeSettings?
         let handTrackerSettings: HandTrackerNodeSettings?
         let pinchSettings: PinchNodeSettings?
         let scrollGestureSettings: ScrollGestureNodeSettings?
@@ -678,6 +763,13 @@ final class GraphStore: ObservableObject {
         let iteratorSettings: IteratorNodeSettings?
         let midiOutSettings: MIDIOutNodeSettings?
         let midiCCSettings: MIDICCNodeSettings?
+        let midiInputCCSettings: MIDIInputCCNodeSettings?
+        let midiInputNoteSettings: MIDIInputNoteNodeSettings?
+        let oscInputSettings: OSCInputNodeSettings?
+        let oscOutputSettings: OSCOutputNodeSettings?
+        let oscSendSettings: OSCSendNodeSettings?
+        let oscMessageSettings: OSCMessageNodeSettings?
+        let oscBundleSettings: OSCBundleNodeSettings?
         let noteSettings: NoteNodeSettings?
         let transformSettings: TransformNodeSettings?
         let billboardSettings: BillboardNodeSettings?
@@ -689,6 +781,7 @@ final class GraphStore: ObservableObject {
         let scene3DPrimitiveSettings: Scene3DPrimitiveNodeSettings?
         let scene3DTextSettings: Scene3DTextNodeSettings?
         let scene3DModelSettings: Scene3DModelNodeSettings?
+        let scene3DGaussianSplatSettings: Scene3DGaussianSplatNodeSettings?
         let scene3DParticleSettings: Scene3DParticleNodeSettings?
         let transitionSettings: TransitionNodeSettings?
         let trailSettings: TrailNodeSettings?
@@ -749,6 +842,7 @@ final class GraphStore: ObservableObject {
     @Published var statusMessage: String?
     @Published var metalCompilerMessage: String?
     @Published var inspectorFocusTarget: InspectorFocusTarget?
+    @Published private(set) var graphExecutionState: GraphExecutionState = .running
     @Published private(set) var scaleNodeSettings: [GraphNode.ID: ScaleNodeSettings] = [:]
     @Published private(set) var sliderNodeSettings: [GraphNode.ID: SliderNodeSettings] = [:]
     @Published private(set) var sliderStyleNodeSettings: [GraphNode.ID: SliderStyleNodeSettings] = [:]
@@ -763,6 +857,7 @@ final class GraphStore: ObservableObject {
     @Published private(set) var point3ScaleNodeSettings: [GraphNode.ID: Point3ScaleNodeSettings] = [:]
     @Published private(set) var point4ScaleNodeSettings: [GraphNode.ID: Point4ScaleNodeSettings] = [:]
     @Published private(set) var holdNodeSettings: [GraphNode.ID: HoldNodeSettings] = [:]
+    @Published private(set) var scalarSmoothNodeSettings: [GraphNode.ID: ScalarSmoothNodeSettings] = [:]
     @Published private(set) var handTrackerNodeSettings: [GraphNode.ID: HandTrackerNodeSettings] = [:]
     @Published private(set) var pinchNodeSettings: [GraphNode.ID: PinchNodeSettings] = [:]
     @Published private(set) var scrollGestureNodeSettings: [GraphNode.ID: ScrollGestureNodeSettings] = [:]
@@ -814,6 +909,13 @@ final class GraphStore: ObservableObject {
     @Published private(set) var iteratorNodeSettings: [GraphNode.ID: IteratorNodeSettings] = [:]
     @Published private(set) var midiOutNodeSettings: [GraphNode.ID: MIDIOutNodeSettings] = [:]
     @Published private(set) var midiCCNodeSettings: [GraphNode.ID: MIDICCNodeSettings] = [:]
+    @Published private(set) var midiInputCCNodeSettings: [GraphNode.ID: MIDIInputCCNodeSettings] = [:]
+    @Published private(set) var midiInputNoteNodeSettings: [GraphNode.ID: MIDIInputNoteNodeSettings] = [:]
+    @Published private(set) var oscInputNodeSettings: [GraphNode.ID: OSCInputNodeSettings] = [:]
+    @Published private(set) var oscOutputNodeSettings: [GraphNode.ID: OSCOutputNodeSettings] = [:]
+    @Published private(set) var oscSendNodeSettings: [GraphNode.ID: OSCSendNodeSettings] = [:]
+    @Published private(set) var oscMessageNodeSettings: [GraphNode.ID: OSCMessageNodeSettings] = [:]
+    @Published private(set) var oscBundleNodeSettings: [GraphNode.ID: OSCBundleNodeSettings] = [:]
     @Published private(set) var noteNodeSettings: [GraphNode.ID: NoteNodeSettings] = [:]
     @Published private(set) var transformNodeSettings: [GraphNode.ID: TransformNodeSettings] = [:]
     @Published private(set) var billboardNodeSettings: [GraphNode.ID: BillboardNodeSettings] = [:]
@@ -825,6 +927,7 @@ final class GraphStore: ObservableObject {
     @Published private(set) var scene3DPrimitiveNodeSettings: [GraphNode.ID: Scene3DPrimitiveNodeSettings] = [:]
     @Published private(set) var scene3DTextNodeSettings: [GraphNode.ID: Scene3DTextNodeSettings] = [:]
     @Published private(set) var scene3DModelNodeSettings: [GraphNode.ID: Scene3DModelNodeSettings] = [:]
+    @Published private(set) var scene3DGaussianSplatNodeSettings: [GraphNode.ID: Scene3DGaussianSplatNodeSettings] = [:]
     @Published private(set) var scene3DParticleNodeSettings: [GraphNode.ID: Scene3DParticleNodeSettings] = [:]
     @Published private(set) var transitionNodeSettings: [GraphNode.ID: TransitionNodeSettings] = [:]
     @Published private(set) var trailNodeSettings: [GraphNode.ID: TrailNodeSettings] = [:]
@@ -852,9 +955,11 @@ final class GraphStore: ObservableObject {
     @Published private(set) var currentPressedKeyCodes: Set<UInt16> = []
     @Published private(set) var currentKeyboardModifierFlags: NSEvent.ModifierFlags = []
     @Published private(set) var currentScrollPosition = CGPoint.zero
+    private var lastScrollEventTime: CFTimeInterval?
     @Published private(set) var currentGraphFileURL: URL?
     @Published private(set) var currentGraphDisplayName = "Untitled Graph"
     @Published private(set) var isCurrentGraphDirty = false
+    @Published private(set) var isGraphWindowVisible = false
     @Published private(set) var snapToGridEnabled = true
     @Published private(set) var canvasViewportRestoreRequestID = UUID()
     @Published private(set) var canvasZoomInRequestID = UUID()
@@ -863,19 +968,32 @@ final class GraphStore: ObservableObject {
     @Published private(set) var nodeLibraryWidth: Double = 320
     @Published private(set) var customFragmentPresets: [CustomFragmentPreset] = []
     private var previewWindowControllers: [GraphNode.ID: PreviewWindowController] = [:]
+    @Published private(set) var activePreviewVideoRecorder: PreviewVideoRecorder?
+    private var activePreviewVideoExportRenderNodeID: GraphNode.ID?
     @Published private(set) var previewWindowContentSizes: [GraphNode.ID: CGSize] = [:]
     private lazy var codeEditorWindowController = CodeEditorWindowController(store: self)
     private var webViewWindowControllers: [GraphNode.ID: WebViewWindowController] = [:]
     private var videoPlayerControllers: [GraphNode.ID: VideoPlayerController] = [:]
+    private var isPresentingOpenPanel = false
+    private var graphClockPausedAt: TimeInterval?
+    private var graphClockAccumulatedPause: TimeInterval = 0
     private let device = MTLCreateSystemDefaultDevice()
     private let audioMonitor = AudioInputMonitor()
     private let videoMonitor = VideoInputMonitor.shared
     private let midiRouter = MIDIOutputRouter()
+    private let midiInputRouter = MIDIInputRouter()
+    private let oscInputRouter = OSCInputRouter()
+    private let oscOutputRouter = OSCOutputRouter()
     private let monitorClientID = UUID()
     private var cancellables = Set<AnyCancellable>()
     private var midiNodeRuntimeStates: [GraphNode.ID: MIDINodeRuntimeState] = [:]
     private var midiCCNodeRuntimeStates: [GraphNode.ID: MIDICCNodeRuntimeState] = [:]
+    private var midiInputCCNodeRuntimeStates: [GraphNode.ID: MIDIInputCCNodeRuntimeState] = [:]
+    private var midiInputNoteNodeRuntimeStates: [GraphNode.ID: MIDIInputNoteNodeRuntimeState] = [:]
+    private var oscInputNodeRuntimeStates: [GraphNode.ID: OSCInputNodeRuntimeState] = [:]
+    private var oscOutputNodeRuntimeStates: [GraphNode.ID: OSCOutputNodeRuntimeState] = [:]
     private var holdNodeRuntimeStates: [GraphNode.ID: HoldNodeRuntimeState] = [:]
+    private var scalarSmoothNodeRuntimeStates: [GraphNode.ID: ScalarSmoothNodeRuntimeState] = [:]
     private var randomNodeRuntimeStates: [GraphNode.ID: RandomNodeRuntimeState] = [:]
     private var pulseNodeRuntimeStates: [GraphNode.ID: PulseNodeRuntimeState] = [:]
     private var beatDetectNodeRuntimeStates: [GraphNode.ID: BeatDetectNodeRuntimeState] = [:]
@@ -978,6 +1096,14 @@ final class GraphStore: ObservableObject {
         synchronizeVideoPlayerControllers()
         validateMetalSource()
         updateMIDINodes()
+        updateOSCNodes()
+        updateOSCNodes()
+        NotificationCenter.default.publisher(for: GaussianSplatLoadProgressStore.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
         resetHistoryTracking()
         lastSavedGraphText = try? currentGraphSnapshotText()
     }
@@ -1382,6 +1508,7 @@ final class GraphStore: ObservableObject {
             scaleSettings: scaleNodeSettings[node.id],
             interpolatorSettings: interpolatorNodeSettings[node.id],
             holdSettings: holdNodeSettings[node.id],
+            scalarSmoothSettings: scalarSmoothNodeSettings[node.id],
             handTrackerSettings: handTrackerNodeSettings[node.id],
             pinchSettings: pinchNodeSettings[node.id],
             scrollGestureSettings: scrollGestureNodeSettings[node.id],
@@ -1412,6 +1539,13 @@ final class GraphStore: ObservableObject {
             iteratorSettings: iteratorNodeSettings[node.id],
             midiOutSettings: midiOutNodeSettings[node.id],
             midiCCSettings: midiCCNodeSettings[node.id],
+            midiInputCCSettings: midiInputCCNodeSettings[node.id],
+            midiInputNoteSettings: midiInputNoteNodeSettings[node.id],
+            oscInputSettings: oscInputNodeSettings[node.id],
+            oscOutputSettings: oscOutputNodeSettings[node.id],
+            oscSendSettings: oscSendNodeSettings[node.id],
+            oscMessageSettings: oscMessageNodeSettings[node.id],
+            oscBundleSettings: oscBundleNodeSettings[node.id],
             noteSettings: noteNodeSettings[node.id],
             transformSettings: transformNodeSettings[node.id],
             billboardSettings: billboardNodeSettings[node.id],
@@ -1423,6 +1557,7 @@ final class GraphStore: ObservableObject {
             scene3DPrimitiveSettings: scene3DPrimitiveNodeSettings[node.id],
             scene3DTextSettings: scene3DTextNodeSettings[node.id],
             scene3DModelSettings: scene3DModelNodeSettings[node.id],
+            scene3DGaussianSplatSettings: scene3DGaussianSplatNodeSettings[node.id],
             scene3DParticleSettings: scene3DParticleNodeSettings[node.id],
             transitionSettings: transitionNodeSettings[node.id],
             trailSettings: trailNodeSettings[node.id],
@@ -1837,6 +1972,28 @@ final class GraphStore: ObservableObject {
             addMIDIOutNode(at: position)
         case .midiCC:
             addMIDICCNode(at: position)
+        case .midiCCInput:
+            addMIDIInputCCNode(at: position)
+        case .midiNoteInput:
+            addMIDIInputNoteNode(at: position)
+        case .oscInput:
+            addOSCInputNode(at: position)
+        case .oscOutput:
+            addOSCOutputNode(at: position)
+        case .oscReceive:
+            addOSCReceiveNode(at: position)
+        case .oscSend:
+            addOSCSendNode(at: position)
+        case .oscGet4:
+            addOSCGet4Node(at: position)
+        case .oscGetArray:
+            addOSCGetArrayNode(at: position)
+        case .oscMake4:
+            addOSCMake4Node(at: position)
+        case .oscMakeArray:
+            addOSCMakeArrayNode(at: position)
+        case .oscBundle:
+            addOSCBundleNode(at: position)
         case .note:
             addNoteNode(at: position)
         case .transform:
@@ -1859,6 +2016,8 @@ final class GraphStore: ObservableObject {
             addScene3DTextNode(at: position)
         case .scene3DModel:
             addScene3DModelNode(at: position)
+        case .scene3DGaussianSplat:
+            addScene3DGaussianSplatNode(at: position)
         case .scene3DParticle:
             addScene3DParticleNode(at: position)
         case .select:
@@ -1934,6 +2093,8 @@ final class GraphStore: ObservableObject {
             addInterpolatorNode(at: position)
         case .hold:
             addHoldNode(at: position)
+        case .scalarSmooth:
+            addScalarSmoothNode(at: position)
         case .trail:
             addTrailNode(at: position)
         case .monitor:
@@ -1983,6 +2144,10 @@ final class GraphStore: ObservableObject {
         if let settings = payload.holdSettings {
             holdNodeSettings[newNodeID] = settings
             holdNodeRuntimeStates[newNodeID] = HoldNodeRuntimeState(heldValue: settings.initialValue)
+        }
+        if let settings = payload.scalarSmoothSettings {
+            scalarSmoothNodeSettings[newNodeID] = settings
+            scalarSmoothNodeRuntimeStates[newNodeID] = ScalarSmoothNodeRuntimeState(value: settings.initialValue)
         }
         if let settings = payload.handTrackerSettings {
             handTrackerNodeSettings[newNodeID] = settings
@@ -2172,6 +2337,29 @@ final class GraphStore: ObservableObject {
         if let settings = payload.midiCCSettings {
             midiCCNodeSettings[newNodeID] = settings
         }
+        if let settings = payload.midiInputCCSettings {
+            midiInputCCNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.midiInputNoteSettings {
+            midiInputNoteNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.oscInputSettings {
+            oscInputNodeSettings[newNodeID] = settings
+            oscInputRouter.ensureListening(on: settings.port)
+        }
+        if let settings = payload.oscOutputSettings {
+            oscOutputNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.oscSendSettings {
+            oscSendNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.oscMessageSettings {
+            oscMessageNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.oscBundleSettings {
+            oscBundleNodeSettings[newNodeID] = normalizedOSCBundleSettings(settings)
+            document = syncOSCBundleNodePorts(in: document)
+        }
         if let settings = payload.noteSettings {
             noteNodeSettings[newNodeID] = settings
         }
@@ -2204,6 +2392,9 @@ final class GraphStore: ObservableObject {
         }
         if let settings = payload.scene3DModelSettings {
             scene3DModelNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.scene3DGaussianSplatSettings {
+            scene3DGaussianSplatNodeSettings[newNodeID] = settings
         }
         if let settings = payload.scene3DParticleSettings {
             scene3DParticleNodeSettings[newNodeID] = settings
@@ -2487,7 +2678,7 @@ final class GraphStore: ObservableObject {
                 return primaryFragmentNode
             }
             return document.nodes.first(where: { $0.id == connectedFragmentID })
-        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .trail, .monitor, .mix, .layers:
+        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
             return primaryFragmentNode
         }
     }
@@ -2556,15 +2747,28 @@ final class GraphStore: ObservableObject {
                     orderedUniforms.append(uniform)
                 }
             case .fragmentShader:
-                if let uniform = currentUniform(named: inputPort.name), uniform.kind == .image {
-                    orderedUniforms.append(uniform)
-                }
+                orderedUniforms.append(imageUniformDescriptor(for: inputPort))
             default:
                 break
             }
         }
 
         return orderedUniforms
+    }
+
+    private func imageUniformDescriptor(for inputPort: GraphPort) -> UniformDescriptor {
+        if let uniform = currentUniform(named: inputPort.name), uniform.kind == .image {
+            return uniform
+        }
+
+        return UniformDescriptor(
+            name: inputPort.name,
+            kind: .image,
+            defaultValue: .image("Texture"),
+            minValue: nil,
+            maxValue: nil,
+            label: nil
+        )
     }
 
     func metalSource(for fragmentNodeID: GraphNode.ID) -> String {
@@ -2597,9 +2801,14 @@ final class GraphStore: ObservableObject {
     }
 
     func runtimePreviewShaderSource(for metalSource: String, uniforms: [UniformDescriptor] = []) -> String {
+        let alphaSafeMetalSource = metalSource
+            .replacingOccurrences(of: "return float4(color, src.a);", with: "return float4(color, previewVisibleAlpha(src));")
+            .replacingOccurrences(of: "return float4(color, current.a);", with: "return float4(color, previewVisibleAlpha(current));")
+            .replacingOccurrences(of: "return float4(moshed, current.a);", with: "return float4(moshed, previewVisibleAlpha(current));")
+            .replacingOccurrences(of: "return float4(melted, current.a);", with: "return float4(melted, previewVisibleAlpha(current));")
         let imageUniforms = uniforms.filter { $0.kind == .image }
-        let needsPoint3Uniforms = uniforms.contains { $0.kind == .float3 } && metalSource.contains("point3Uniforms") == false
-        let needsPoint4Uniforms = uniforms.contains { $0.kind == .float4 } && metalSource.contains("point4Uniforms") == false
+        let needsPoint3Uniforms = uniforms.contains { $0.kind == .float3 } && alphaSafeMetalSource.contains("point3Uniforms") == false
+        let needsPoint4Uniforms = uniforms.contains { $0.kind == .float4 } && alphaSafeMetalSource.contains("point4Uniforms") == false
         let imageAliasLines = imageUniforms.flatMap { uniform -> [String] in
             let lowercased = uniform.name.prefix(1).lowercased() + uniform.name.dropFirst()
             guard lowercased != uniform.name else { return [] }
@@ -2618,21 +2827,21 @@ final class GraphStore: ObservableObject {
 
         let fragmentSource: String
         if extraParameters.isEmpty {
-            fragmentSource = metalSource
-        } else if metalSource.contains("[[sampler(") || metalSource.contains("[[texture(") {
-            fragmentSource = metalSource
-        } else if metalSource.contains("constant float4* point4Uniforms [[buffer(6)]])") {
-            fragmentSource = metalSource.replacingOccurrences(
+            fragmentSource = alphaSafeMetalSource
+        } else if alphaSafeMetalSource.contains("[[sampler(") || alphaSafeMetalSource.contains("[[texture(") {
+            fragmentSource = alphaSafeMetalSource
+        } else if alphaSafeMetalSource.contains("constant float4* point4Uniforms [[buffer(6)]])") {
+            fragmentSource = alphaSafeMetalSource.replacingOccurrences(
                 of: "constant float4* point4Uniforms [[buffer(6)]])",
                 with: "constant float4* point4Uniforms [[buffer(6)]]\(extraParameters))"
             )
-        } else if metalSource.contains("constant float3* point3Uniforms [[buffer(5)]])") {
-            fragmentSource = metalSource.replacingOccurrences(
+        } else if alphaSafeMetalSource.contains("constant float3* point3Uniforms [[buffer(5)]])") {
+            fragmentSource = alphaSafeMetalSource.replacingOccurrences(
                 of: "constant float3* point3Uniforms [[buffer(5)]])",
                 with: "constant float3* point3Uniforms [[buffer(5)]]\(extraParameters))"
             )
         } else {
-            fragmentSource = metalSource.replacingOccurrences(
+            fragmentSource = alphaSafeMetalSource.replacingOccurrences(
                 of: "constant uint* boolUniforms [[buffer(4)]])",
                 with: "constant uint* boolUniforms [[buffer(4)]]\(extraParameters))"
             )
@@ -2652,6 +2861,14 @@ final class GraphStore: ObservableObject {
             float time;
             float4 date;
         };
+
+        float previewLuminance(float3 c) {
+            return dot(c, float3(0.299, 0.587, 0.114));
+        }
+
+        float previewVisibleAlpha(float4 c) {
+            return max(c.a, smoothstep(0.002, 0.04, previewLuminance(c.rgb)));
+        }
 
         \(imageAliasLines)
 
@@ -2718,8 +2935,12 @@ final class GraphStore: ObservableObject {
         })
     }
 
+    var isGraphRunning: Bool {
+        graphExecutionState == .running
+    }
+
     var availableCoreNodeTypes: [LibraryCoreNodeType] {
-        var coreNodes: [LibraryCoreNodeType] = [.mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .iterator, .midiOut, .midiCC, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .imageNode, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .trail, .monitor, .mix, .layers, .plasma, .lavaLamp, .organicMotion, .colorDiffusionFlow, .nebula, .liquidChrome, .liquidFlux, .prismRings, .turntableSpectrum, .hologramScan, .hologramVideo, .badTVGlitch, .heatDistortion, .liquidGlass, .chromaticAberration, .aurora, .digitalRain, .plasmaVortex, .cyberTunnel, .rgbOffsetSplit, .edgeDetection, .liquidNoiseWipe, .mercuryMelt, .glitchDisplacement, .datamosh, .temporalGhostTrails, .frameMelt, .prismSplit, .ghostFrameEcho, .pixelSortBands, .phyllotaxisPetalSpiral, .metalFragment, .renderOutput]
+        var coreNodes: [LibraryCoreNodeType] = [.mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .iterator, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .scene3DFishSchool, .scene3DDustHaze, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .imageNode, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers, .plasma, .lavaLamp, .organicMotion, .colorDiffusionFlow, .nebula, .liquidChrome, .liquidFlux, .prismRings, .turntableSpectrum, .hologramScan, .hologramVideo, .badTVGlitch, .heatDistortion, .liquidGlass, .chromaticAberration, .aurora, .digitalRain, .plasmaVortex, .cyberTunnel, .rgbOffsetSplit, .edgeDetection, .liquidNoiseWipe, .mercuryMelt, .glitchDisplacement, .datamosh, .temporalGhostTrails, .frameMelt, .prismSplit, .ghostFrameEcho, .pixelSortBands, .phyllotaxisPetalSpiral, .metalFragment, .renderOutput]
         if editingIteratorNodeID != nil {
             coreNodes.insert(.iteratorVariables, at: min(coreNodes.count, 1))
         }
@@ -2743,7 +2964,7 @@ final class GraphStore: ObservableObject {
         switch node.kind {
         case .metalFragment, .renderOutput:
             return true
-        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .trail, .monitor, .mix, .layers:
+        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
             return true
         }
     }
@@ -2774,6 +2995,360 @@ final class GraphStore: ObservableObject {
         default:
             return nil
         }
+    }
+
+    func midiInputCCValue(for nodeID: GraphNode.ID, outputName: String) -> Double? {
+        let settings = settings(forMIDIInputCCNodeID: nodeID)
+        let channel = settings.listenToAllChannels ? nil : settings.channel
+        guard let event = midiInputRouter.latestCCEvent(channel: channel, controller: settings.ccNumber) else {
+            return outputName == "Trigger" ? 0.0 : nil
+        }
+
+        guard case .controlChange(_, let value) = event.kind else { return nil }
+        var runtime = midiInputCCNodeRuntimeStates[nodeID] ?? MIDIInputCCNodeRuntimeState()
+        if runtime.lastEventID != event.id {
+            runtime.lastEventID = event.id
+            runtime.triggerFrame = evaluationFrameID
+            midiInputCCNodeRuntimeStates[nodeID] = runtime
+        }
+
+        switch outputName {
+        case "Value":
+            return Double(value)
+        case "Normalized":
+            return Double(value) / 127.0
+        case "Trigger":
+            return runtime.triggerFrame == evaluationFrameID ? 1.0 : 0.0
+        default:
+            return nil
+        }
+    }
+
+    func midiInputNoteValue(for nodeID: GraphNode.ID, outputName: String) -> Double? {
+        let settings = settings(forMIDIInputNoteNodeID: nodeID)
+        let channel = settings.listenToAllChannels ? nil : settings.channel
+        let noteFilter = settings.listenToAllNotes ? nil : settings.noteNumber
+        let event = midiInputRouter.latestNoteEvent(channel: channel, note: noteFilter)
+        let activeVelocity = midiInputRouter.activeNoteVelocity(channel: channel, note: noteFilter)
+
+        var runtime = midiInputNoteNodeRuntimeStates[nodeID] ?? MIDIInputNoteNodeRuntimeState()
+        if let event, runtime.lastEventID != event.id {
+            runtime.lastEventID = event.id
+            if case .noteOn = event.kind {
+                runtime.triggerFrame = evaluationFrameID
+            }
+            midiInputNoteNodeRuntimeStates[nodeID] = runtime
+        }
+
+        switch outputName {
+        case "Note":
+            if let event {
+                switch event.kind {
+                case .noteOn(let note, _), .noteOff(let note):
+                    return Double(note)
+                case .controlChange:
+                    return nil
+                }
+            }
+            return settings.listenToAllNotes ? nil : Double(settings.noteNumber)
+        case "Velocity":
+            return Double(activeVelocity ?? 0)
+        case "Normalized":
+            return Double(activeVelocity ?? 0) / 127.0
+        case "Gate":
+            return activeVelocity == nil ? 0.0 : 1.0
+        case "Trigger":
+            return runtime.triggerFrame == evaluationFrameID ? 1.0 : 0.0
+        default:
+            return nil
+        }
+    }
+
+    func oscInputScalarValue(for nodeID: GraphNode.ID, outputName: String) -> Double? {
+        let settings = settings(forOSCInputNodeID: nodeID)
+        guard let message = oscInputRouter.latestMessage(port: settings.port, address: settings.address) else {
+            return outputName == "Trigger" ? 0.0 : nil
+        }
+
+        var runtime = oscInputNodeRuntimeStates[nodeID] ?? OSCInputNodeRuntimeState()
+        if runtime.lastEventID != message.id {
+            runtime.lastEventID = message.id
+            runtime.triggerFrame = evaluationFrameID
+            oscInputNodeRuntimeStates[nodeID] = runtime
+        }
+
+        switch outputName {
+        case "Float":
+            guard let argument = oscArgument(in: message, at: 0) else { return nil }
+            switch argument {
+            case .float(let value):
+                return Double(value)
+            case .int(let value):
+                return Double(value)
+            case .string:
+                return nil
+            }
+        case "Int":
+            guard let argument = oscArgument(in: message, at: 0) else { return nil }
+            switch argument {
+                case .float(let value):
+                    return Double(Int(value.rounded()))
+                case .int(let value):
+                    return Double(value)
+                case .string:
+                    return nil
+                }
+        case "Float 2":
+            guard let argument = oscArgument(in: message, at: 1) else { return nil }
+            switch argument {
+            case .float(let value):
+                return Double(value)
+            case .int(let value):
+                return Double(value)
+            case .string:
+                return nil
+            }
+        case "Int 2":
+            guard let argument = oscArgument(in: message, at: 1) else { return nil }
+            switch argument {
+                case .float(let value):
+                    return Double(Int(value.rounded()))
+                case .int(let value):
+                    return Double(value)
+                case .string:
+                    return nil
+                }
+        case "Float 3":
+            guard let argument = oscArgument(in: message, at: 2) else { return nil }
+            switch argument {
+            case .float(let value):
+                return Double(value)
+            case .int(let value):
+                return Double(value)
+            case .string:
+                return nil
+            }
+        case "Int 3":
+            guard let argument = oscArgument(in: message, at: 2) else { return nil }
+            switch argument {
+                case .float(let value):
+                    return Double(Int(value.rounded()))
+                case .int(let value):
+                    return Double(value)
+                case .string:
+                    return nil
+                }
+        case "Float 4":
+            guard let argument = oscArgument(in: message, at: 3) else { return nil }
+            switch argument {
+            case .float(let value):
+                return Double(value)
+            case .int(let value):
+                return Double(value)
+            case .string:
+                return nil
+            }
+        case "Int 4":
+            guard let argument = oscArgument(in: message, at: 3) else { return nil }
+            switch argument {
+                case .float(let value):
+                    return Double(Int(value.rounded()))
+                case .int(let value):
+                    return Double(value)
+                case .string:
+                    return nil
+                }
+        case "Trigger":
+            return runtime.triggerFrame == evaluationFrameID ? 1.0 : 0.0
+        default:
+            return nil
+        }
+    }
+
+    func oscInputStringValue(for nodeID: GraphNode.ID, outputName: String) -> String? {
+        let settings = settings(forOSCInputNodeID: nodeID)
+        guard let message = oscInputRouter.latestMessage(port: settings.port, address: settings.address) else {
+            return nil
+        }
+
+        switch outputName {
+        case "Text":
+            guard let argument = oscArgument(in: message, at: 0) else { return nil }
+            switch argument {
+            case .float(let value):
+                return String(format: "%.3f", Double(value))
+            case .int(let value):
+                return "\(value)"
+            case .string(let value):
+                return value
+            }
+        case "Text 2":
+            guard let argument = oscArgument(in: message, at: 1) else { return nil }
+            switch argument {
+            case .float(let value):
+                return String(format: "%.3f", Double(value))
+            case .int(let value):
+                return "\(value)"
+            case .string(let value):
+                return value
+            }
+        case "Text 3":
+            guard let argument = oscArgument(in: message, at: 2) else { return nil }
+            switch argument {
+            case .float(let value):
+                return String(format: "%.3f", Double(value))
+            case .int(let value):
+                return "\(value)"
+            case .string(let value):
+                return value
+            }
+        case "Text 4":
+            guard let argument = oscArgument(in: message, at: 3) else { return nil }
+            switch argument {
+            case .float(let value):
+                return String(format: "%.3f", Double(value))
+            case .int(let value):
+                return "\(value)"
+            case .string(let value):
+                return value
+            }
+        case "Address":
+            return message.address
+        default:
+            return nil
+        }
+    }
+
+    func oscReceiveScalarValue(for nodeID: GraphNode.ID, outputName: String) -> Double? {
+        let settings = settings(forOSCInputNodeID: nodeID)
+        guard let message = oscInputRouter.latestMessage(port: settings.port, address: settings.address) else {
+            return outputName == "Trigger" ? 0.0 : nil
+        }
+
+        var runtime = oscInputNodeRuntimeStates[nodeID] ?? OSCInputNodeRuntimeState()
+        if runtime.lastEventID != message.id {
+            runtime.lastEventID = message.id
+            runtime.triggerFrame = evaluationFrameID
+            oscInputNodeRuntimeStates[nodeID] = runtime
+        }
+
+        if outputName == "Trigger" {
+            return runtime.triggerFrame == evaluationFrameID ? 1.0 : 0.0
+        }
+
+        return nil
+    }
+
+    func oscReceiveStringValue(for nodeID: GraphNode.ID, outputName: String) -> String? {
+        guard outputName == "Address" else { return nil }
+        let settings = settings(forOSCInputNodeID: nodeID)
+        guard let packet = oscInputRouter.latestPacket(port: settings.port, address: settings.address) else {
+            return nil
+        }
+        return packet.messages.last?.address
+    }
+
+    private func oscReceivePacketValue(for nodeID: GraphNode.ID) -> OSCPacketValue? {
+        let settings = settings(forOSCInputNodeID: nodeID)
+        return oscInputRouter.latestPacket(port: settings.port, address: settings.address)
+    }
+
+    private func oscGetPacketValue(for nodeID: GraphNode.ID) -> OSCPacketValue? {
+        guard
+            let node = document.nodes.first(where: { $0.id == nodeID }),
+            let inputPort = node.inputPorts.first(where: { $0.name == "Packet" })
+        else {
+            return nil
+        }
+
+        return resolvedOSCPacketValue(forInputPortID: inputPort.id)
+    }
+
+    private func oscMakePacketValue(for nodeID: GraphNode.ID) -> OSCPacketValue? {
+        guard let node = document.nodes.first(where: { $0.id == nodeID }) else { return nil }
+        let settings = settings(forOSCMessageNodeID: nodeID)
+        let values = oscOutputValues(for: node, prefix: "")
+        guard values.isEmpty == false else { return nil }
+        return OSCPacketValue(messages: [OSCMessageValue(address: normalizedOSCAddress(settings.address), arguments: values)])
+    }
+
+    private func oscMakeArrayPacketValue(for nodeID: GraphNode.ID) -> OSCPacketValue? {
+        guard
+            let node = document.nodes.first(where: { $0.id == nodeID }),
+            let inputPort = node.inputPorts.first(where: { $0.name == "Array" })
+        else {
+            return nil
+        }
+        let settings = settings(forOSCMessageNodeID: nodeID)
+        let values = scalarArrayValue(forInputPortID: inputPort.id, visitedNodeIDs: [nodeID]) ?? []
+        let arguments = values.map { OSCValue.float(Float($0)) }
+        return OSCPacketValue(messages: [OSCMessageValue(address: normalizedOSCAddress(settings.address), arguments: arguments)])
+    }
+
+    private func oscBundlePacketValue(for nodeID: GraphNode.ID) -> OSCPacketValue? {
+        guard let node = document.nodes.first(where: { $0.id == nodeID }) else { return nil }
+        let settings = settings(forOSCBundleNodeID: nodeID)
+        let packets = node.inputPorts.prefix(settings.packetCount).compactMap { resolvedOSCPacketValue(forInputPortID: $0.id) }
+        let messages = packets.flatMap(\.messages)
+        guard messages.isEmpty == false else { return nil }
+        return OSCPacketValue(messages: messages, forceBundle: messages.count > 1 || packets.count > 1)
+    }
+
+    private func oscPacketValueForOutputPort(_ outputPort: GraphPort) -> OSCPacketValue? {
+        guard case .oscPacketSignal = outputPort.kind else { return nil }
+        guard let sourceNode = document.nodes.first(where: { $0.id == outputPort.nodeID }) else { return nil }
+
+        switch sourceNode.kind {
+        case .oscReceive:
+            return oscReceivePacketValue(for: sourceNode.id)
+        case .oscMake4:
+            return oscMakePacketValue(for: sourceNode.id)
+        case .oscMakeArray:
+            return oscMakeArrayPacketValue(for: sourceNode.id)
+        case .oscBundle:
+            return oscBundlePacketValue(for: sourceNode.id)
+        default:
+            return nil
+        }
+    }
+
+    private func resolvedOSCPacketValue(forInputPortID portID: GraphPort.ID) -> OSCPacketValue? {
+        guard
+            let connection = effectiveIncomingConnection(for: portID),
+            let sourcePort = resolvedSourcePort(for: connection.fromPortID)
+        else {
+            return nil
+        }
+
+        return oscPacketValueForOutputPort(sourcePort)
+    }
+
+    private func oscArgument(in packet: OSCPacketValue?, at index: Int) -> OSCValue? {
+        guard let message = packet?.messages.first, message.arguments.indices.contains(index) else { return nil }
+        return message.arguments[index]
+    }
+
+    private func oscAddress(in packet: OSCPacketValue?) -> String? {
+        packet?.messages.first?.address
+    }
+
+    private func oscNumericArguments(in packet: OSCPacketValue?) -> [Double]? {
+        guard let message = packet?.messages.first else { return nil }
+        return message.arguments.compactMap { argument in
+            switch argument {
+            case .float(let value):
+                return Double(value)
+            case .int(let value):
+                return Double(value)
+            case .string:
+                return nil
+            }
+        }
+    }
+
+    private func oscArgument(in message: OSCInputRouter.Message, at index: Int) -> OSCValue? {
+        guard message.arguments.indices.contains(index) else { return nil }
+        return message.arguments[index]
     }
 
     private func evaluateBeatDetect(for nodeID: GraphNode.ID) -> BeatDetectNodeRuntimeState {
@@ -2962,6 +3537,8 @@ final class GraphStore: ObservableObject {
             return .scalarSignal(signal)
         case .materialSignal(let signal):
             return .materialSignal(signal)
+        case .oscPacketSignal(let signal):
+            return .oscPacketSignal(signal)
         case .pointSignal(let signal):
             return .pointSignal(signal)
         case .point3Signal(let signal):
@@ -2999,6 +3576,8 @@ final class GraphStore: ObservableObject {
             return .fragmentShader
         case .materialSignal(let signal):
             return .materialSignal(signal)
+        case .oscPacketSignal(let signal):
+            return .oscPacketSignal(signal)
         case .pointSignal(let signal):
             return .pointSignal(signal)
         case .point3Signal(let signal):
@@ -3368,11 +3947,17 @@ final class GraphStore: ObservableObject {
 
     func updateScrollDelta(_ delta: CGPoint) {
         guard delta != .zero else { return }
+        lastScrollEventTime = CACurrentMediaTime()
         currentScrollPosition = CGPoint(
             x: currentScrollPosition.x + delta.x,
             y: currentScrollPosition.y + delta.y
         )
         objectWillChange.send()
+    }
+
+    private var isScrollActive: Bool {
+        guard let lastScrollEventTime else { return false }
+        return CACurrentMediaTime() - lastScrollEventTime < 0.35
     }
 
     func connectPorts(from outputPortID: GraphPort.ID, to inputPortID: GraphPort.ID) {
@@ -3564,66 +4149,45 @@ final class GraphStore: ObservableObject {
     }
 
     func openGraphSnapshot() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.json, .data, .plainText]
-
-        let openSelection: (URL) -> Void = { [weak self] url in
-            self?.importGraphSnapshot(result: .success([url]))
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                openSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.json, .data, .plainText]
+            },
+            onSelection: { [weak self] url in
+                self?.importGraphSnapshot(result: .success([url]))
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            openSelection(url)
+        )
+    }
+
+    func graphWindowVisibilityDidChange(_ isVisible: Bool) {
+        isGraphWindowVisible = isVisible
+        if isVisible {
+            GraphStore.setCommandTargetStore(self)
+        } else {
+            GraphStore.clearCommandTargetStore(if: self)
         }
     }
 
     func importISFFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.text, .plainText, .sourceCode, .data]
-
-        let openSelection: (URL) -> Void = { [weak self] url in
-            self?.importISF(result: .success([url]))
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                openSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.text, .plainText, .sourceCode, .data]
+            },
+            onSelection: { [weak self] url in
+                self?.importISF(result: .success([url]))
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            openSelection(url)
-        }
+        )
     }
 
     func importMetalFile() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.sourceCode, .text, .plainText, .data]
-
-        let openSelection: (URL) -> Void = { [weak self] url in
-            self?.importMetal(result: .success([url]))
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                openSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.sourceCode, .text, .plainText, .data]
+            },
+            onSelection: { [weak self] url in
+                self?.importMetal(result: .success([url]))
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            openSelection(url)
-        }
+        )
     }
 
     func toggleMainWindowFullScreen() {
@@ -4100,6 +4664,13 @@ final class GraphStore: ObservableObject {
                     name: "Y",
                     direction: .output,
                     kind: .scalarSignal("scrollY")
+                ),
+                GraphPort(
+                    id: "scroll:active",
+                    nodeID: nodeID,
+                    name: "Active",
+                    direction: .output,
+                    kind: .scalarSignal("active")
                 )
             ]
         )
@@ -4371,7 +4942,8 @@ final class GraphStore: ObservableObject {
                 GraphPort(id: "trackball:\(nodeID.uuidString):distance", nodeID: nodeID, name: "Distance", direction: .output, kind: .scalarSignal("distance")),
                 GraphPort(id: "trackball:\(nodeID.uuidString):rotationX", nodeID: nodeID, name: "Rotation X", direction: .output, kind: .scalarSignal("rotationX")),
                 GraphPort(id: "trackball:\(nodeID.uuidString):rotationY", nodeID: nodeID, name: "Rotation Y", direction: .output, kind: .scalarSignal("rotationY")),
-                GraphPort(id: "trackball:\(nodeID.uuidString):dragging", nodeID: nodeID, name: "Dragging", direction: .output, kind: .scalarSignal("dragging"))
+                GraphPort(id: "trackball:\(nodeID.uuidString):dragging", nodeID: nodeID, name: "Dragging", direction: .output, kind: .scalarSignal("dragging")),
+                GraphPort(id: "trackball:\(nodeID.uuidString):scrollActive", nodeID: nodeID, name: "Scroll Active", direction: .output, kind: .scalarSignal("scrollActive"))
             ]
         )
 
@@ -7187,6 +7759,38 @@ final class GraphStore: ObservableObject {
         statusMessage = "Added \(newNode.title) to the graph."
     }
 
+    func addScalarSmoothNode(at position: CGPoint) {
+        let smoothIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .scalarSmooth = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "Scalar Smooth \(smoothIndex)",
+            kind: .scalarSmooth,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "scalarsmooth:\(nodeID.uuidString):target", nodeID: nodeID, name: "Target", direction: .input, kind: .scalarSignal("target")),
+                GraphPort(id: "scalarsmooth:\(nodeID.uuidString):amount", nodeID: nodeID, name: "Amount", direction: .input, kind: .scalarSignal("amount")),
+                GraphPort(id: "scalarsmooth:\(nodeID.uuidString):inertia", nodeID: nodeID, name: "Inertia", direction: .input, kind: .scalarSignal("inertia"))
+            ],
+            outputPorts: [
+                GraphPort(id: "scalarsmooth:\(nodeID.uuidString):value", nodeID: nodeID, name: "Value", direction: .output, kind: .scalarSignal("value"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        let settings = ScalarSmoothNodeSettings()
+        scalarSmoothNodeSettings[nodeID] = settings
+        scalarSmoothNodeRuntimeStates[nodeID] = ScalarSmoothNodeRuntimeState(value: settings.initialValue)
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
     func addTrailNode(at position: CGPoint) {
         let trailIndex = document.nodes.reduce(0) { partialResult, node in
             guard case .trail = node.kind else { return partialResult }
@@ -7370,29 +7974,7 @@ final class GraphStore: ObservableObject {
             title: title,
             kind: .videoPlayer,
             position: position,
-            inputPorts: [
-                GraphPort(
-                    id: "videoplayer:\(nodeID.uuidString):play",
-                    nodeID: nodeID,
-                    name: "Play",
-                    direction: .input,
-                    kind: .scalarSignal("play")
-                ),
-                GraphPort(
-                    id: "videoplayer:\(nodeID.uuidString):rate",
-                    nodeID: nodeID,
-                    name: "Rate",
-                    direction: .input,
-                    kind: .scalarSignal("rate")
-                ),
-                GraphPort(
-                    id: "videoplayer:\(nodeID.uuidString):seek",
-                    nodeID: nodeID,
-                    name: "Seek",
-                    direction: .input,
-                    kind: .scalarSignal("seek")
-                )
-            ],
+            inputPorts: makeVideoPlayerInputPorts(nodeID: nodeID),
             outputPorts: [
                 GraphPort(
                     id: "videoplayer:\(nodeID.uuidString):output",
@@ -7412,6 +7994,15 @@ final class GraphStore: ObservableObject {
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
         statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    private func makeVideoPlayerInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "videoplayer:\(nodeID.uuidString):play", nodeID: nodeID, name: "Play", direction: .input, kind: .scalarSignal("play")),
+            GraphPort(id: "videoplayer:\(nodeID.uuidString):rate", nodeID: nodeID, name: "Rate", direction: .input, kind: .scalarSignal("rate")),
+            GraphPort(id: "videoplayer:\(nodeID.uuidString):seek", nodeID: nodeID, name: "Seek", direction: .input, kind: .scalarSignal("seek")),
+            GraphPort(id: "videoplayer:\(nodeID.uuidString):volume", nodeID: nodeID, name: "Volume", direction: .input, kind: .scalarSignal("volume"))
+        ]
     }
 
     func addBlurNode(at position: CGPoint) {
@@ -7693,68 +8284,151 @@ final class GraphStore: ObservableObject {
     }
 
     func openImagePicker(at position: CGPoint) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.png, .jpeg, .gif, .tiff, .bmp, .webP, .heic, .heif]
-
-        let importSelection: (URL) -> Void = { [weak self] url in
-            self?.addImageNode(fromFileURL: url, at: position)
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                importSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.png, .jpeg, .gif, .tiff, .bmp, .webP, .heic, .heif]
+            },
+            onSelection: { [weak self] url in
+                self?.addImageNode(fromFileURL: url, at: position)
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            importSelection(url)
-        }
+        )
     }
 
     func openVideoPlayerPicker(for nodeID: GraphNode.ID? = nil, at position: CGPoint? = nil) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie, .audiovisualContent]
-
-        let importSelection: (URL) -> Void = { [weak self] url in
-            self?.attachVideoFile(url, to: nodeID, at: position)
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                importSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie, .audiovisualContent]
+            },
+            onSelection: { [weak self] url in
+                self?.attachVideoFile(url, to: nodeID, at: position)
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            importSelection(url)
-        }
+        )
     }
 
     func openScene3DModelPicker(for nodeID: GraphNode.ID? = nil, at position: CGPoint? = nil) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [
-            "dae", "usdz", "usd", "usda", "usdc", "scn", "obj"
-        ].compactMap { UTType(filenameExtension: $0) }
-
-        let importSelection: (URL) -> Void = { [weak self] url in
-            self?.attachScene3DModelFile(url, to: nodeID, at: position)
-        }
-
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
-            panel.beginSheetModal(for: window) { response in
-                guard response == .OK, let url = panel.url else { return }
-                importSelection(url)
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [
+                    "dae", "usdz", "usd", "usda", "usdc", "scn", "obj"
+                ].compactMap { UTType(filenameExtension: $0) }
+            },
+            onSelection: { [weak self] url in
+                self?.attachScene3DModelFile(url, to: nodeID, at: position)
             }
-        } else if panel.runModal() == .OK, let url = panel.url {
-            importSelection(url)
+        )
+    }
+
+    func openScene3DGaussianSplatPicker(for nodeID: GraphNode.ID? = nil, at position: CGPoint? = nil) {
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [
+                    UTType(filenameExtension: "ply")
+                ].compactMap { $0 }
+            },
+            onSelection: { [weak self] url in
+                self?.attachScene3DGaussianSplatFile(url, to: nodeID, at: position)
+            }
+        )
+    }
+
+    private func presentOpenPanel(
+        configure: @escaping (NSOpenPanel) -> Void,
+        onSelection: @escaping (URL) -> Void
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPresentingOpenPanel == false else { return }
+            self.isPresentingOpenPanel = true
+            let shouldResumeGraph = self.isGraphRunning
+            if shouldResumeGraph {
+                self.suspendGraphExecutionForModalPanel()
+            }
+            self.statusMessage = "Opening file picker..."
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = false
+                panel.canChooseFiles = true
+                panel.allowsMultipleSelection = false
+                configure(panel)
+
+                let finish: (NSApplication.ModalResponse, URL?) -> Void = { [weak self] response, url in
+                    guard let self else { return }
+                    self.isPresentingOpenPanel = false
+                    if response == .OK, let url {
+                        onSelection(url)
+                    }
+                    if shouldResumeGraph {
+                        self.resumeGraphExecutionAfterModalPanel()
+                    }
+                }
+
+                if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                    panel.beginSheetModal(for: window) { response in
+                        finish(response, panel.url)
+                    }
+                } else {
+                    finish(panel.runModal(), panel.url)
+                }
+            }
         }
+    }
+
+    private func suspendGraphExecutionForModalPanel() {
+        pauseGraphClock()
+        graphExecutionState = .paused
+        updateAudioMonitorState()
+        updateVideoMonitorState()
+        updateMIDINodes()
+        updateOSCNodes()
+    }
+
+    private func resumeGraphExecutionAfterModalPanel() {
+        resumeGraphClock()
+        graphExecutionState = .running
+        updateAudioMonitorState()
+        updateVideoMonitorState()
+        updateMIDINodes()
+        updateOSCNodes()
+    }
+
+    private func pauseGraphClock() {
+        guard graphClockPausedAt == nil else { return }
+        graphClockPausedAt = Date().timeIntervalSinceReferenceDate
+    }
+
+    private func resumeGraphClock() {
+        guard let pausedAt = graphClockPausedAt else { return }
+        graphClockAccumulatedPause += Date().timeIntervalSinceReferenceDate - pausedAt
+        graphClockPausedAt = nil
+    }
+
+    private var graphClockTime: TimeInterval {
+        let now = graphClockPausedAt ?? Date().timeIntervalSinceReferenceDate
+        return now - graphClockAccumulatedPause
+    }
+
+    func openScene3DGaussianSplatPanoramaPicker(for nodeID: GraphNode.ID? = nil, at position: CGPoint? = nil) {
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.image]
+            },
+            onSelection: { [weak self] url in
+                self?.attachScene3DGaussianSplatPanorama(url, to: nodeID, at: position)
+            }
+        )
+    }
+
+    func openScene3DGaussianSplatDepthMapPicker(for nodeID: GraphNode.ID) {
+        presentOpenPanel(
+            configure: { panel in
+                panel.allowedContentTypes = [.image]
+            },
+            onSelection: { [weak self] url in
+                self?.attachScene3DGaussianSplatDepthMap(url, to: nodeID)
+            }
+        )
     }
 
     private func attachVideoFile(_ url: URL, to nodeID: GraphNode.ID?, at position: CGPoint?) {
@@ -7791,6 +8465,102 @@ final class GraphStore: ObservableObject {
 
         addScene3DModelNode(at: position ?? CGPoint(x: 200, y: 200), filename: filename, bookmarkData: bookmark)
         statusMessage = "Loaded \(filename)."
+    }
+
+    private func attachScene3DGaussianSplatFile(_ url: URL, to nodeID: GraphNode.ID?, at position: CGPoint?) {
+        let bookmark = (try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)) ?? Data()
+        let filename = url.lastPathComponent
+
+        if let nodeID, node(withID: nodeID) != nil {
+            ensureScene3DGaussianSplatPorts(for: nodeID)
+            GaussianSplatLoadProgressStore.shared.update(
+                nodeID: nodeID,
+                isLoading: true,
+                progress: 0.01,
+                message: "Queued splat load..."
+            )
+            updateScene3DGaussianSplatNodeSettings(nodeID) { settings in
+                settings.filename = filename
+                settings.bookmarkData = bookmark
+                settings.panoramaImageData = Data()
+                settings.panoramaDepthImageData = Data()
+            }
+            statusMessage = "Loaded \(filename)."
+            return
+        }
+
+        addScene3DGaussianSplatNode(at: position ?? CGPoint(x: 200, y: 200), filename: filename, bookmarkData: bookmark)
+        statusMessage = "Loaded \(filename)."
+    }
+
+    private func attachScene3DGaussianSplatPanorama(_ url: URL, to nodeID: GraphNode.ID?, at position: CGPoint?) {
+        do {
+            let imageData = try readSecurityScopedData(at: url)
+            let filename = url.lastPathComponent
+
+            if let nodeID, node(withID: nodeID) != nil {
+                ensureScene3DGaussianSplatPorts(for: nodeID)
+                GaussianSplatLoadProgressStore.shared.update(
+                    nodeID: nodeID,
+                    isLoading: true,
+                    progress: 0.01,
+                    message: "Queued panorama load..."
+                )
+                updateScene3DGaussianSplatNodeSettings(nodeID) { settings in
+                    settings.filename = filename
+                    settings.bookmarkData = Data()
+                    settings.panoramaImageData = imageData
+                    settings.panoramaDepthImageData = Data()
+                    settings.cameraDistance = 0.0
+                    settings.pointSize = 0.35
+                    settings.maxSplats = 1_000_000.0
+                    settings.panoramaRadius = 20.0
+                    settings.panoramaDepthScale = 0.5
+                    settings.autoCenter = false
+                    settings.autoScale = false
+                }
+                statusMessage = "Loaded panorama \(filename)."
+                return
+            }
+
+            addScene3DGaussianSplatNode(at: position ?? CGPoint(x: 200, y: 200), filename: filename, bookmarkData: Data())
+            if let newNodeID = selectedNodeID {
+                updateScene3DGaussianSplatNodeSettings(newNodeID) { settings in
+                    settings.panoramaImageData = imageData
+                    settings.panoramaDepthImageData = Data()
+                    settings.cameraDistance = 0.0
+                    settings.pointSize = 0.35
+                    settings.maxSplats = 1_000_000.0
+                    settings.panoramaRadius = 20.0
+                    settings.panoramaDepthScale = 0.5
+                    settings.autoCenter = false
+                    settings.autoScale = false
+                }
+            }
+            statusMessage = "Loaded panorama \(filename)."
+        } catch {
+            statusMessage = "Could not load panorama image."
+        }
+    }
+
+    private func attachScene3DGaussianSplatDepthMap(_ url: URL, to nodeID: GraphNode.ID) {
+        do {
+            let imageData = try readSecurityScopedData(at: url)
+            guard node(withID: nodeID) != nil else { return }
+            ensureScene3DGaussianSplatPorts(for: nodeID)
+            GaussianSplatLoadProgressStore.shared.update(
+                nodeID: nodeID,
+                isLoading: true,
+                progress: 0.01,
+                message: "Queued depth map load..."
+            )
+            updateScene3DGaussianSplatNodeSettings(nodeID) { settings in
+                settings.panoramaDepthImageData = imageData
+            }
+            statusMessage = "Loaded panorama depth map \(url.lastPathComponent)."
+        } catch {
+            statusMessage = "Could not load panorama depth map."
+        }
     }
 
     private func addImageNode(filename: String, imageData: Data, at position: CGPoint) {
@@ -7964,6 +8734,359 @@ final class GraphStore: ObservableObject {
         document = updatedDocument
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addMIDIInputCCNode(at position: CGPoint) {
+        let ccIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .midiCCInput = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "MIDI CC In \(ccIndex)",
+            kind: .midiCCInput,
+            position: position,
+            inputPorts: [],
+            outputPorts: [
+                GraphPort(id: "midiccin:\(nodeID.uuidString):value", nodeID: nodeID, name: "Value", direction: .output, kind: .scalarSignal("value")),
+                GraphPort(id: "midiccin:\(nodeID.uuidString):normalized", nodeID: nodeID, name: "Normalized", direction: .output, kind: .scalarSignal("normalized")),
+                GraphPort(id: "midiccin:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        midiInputCCNodeSettings[nodeID] = MIDIInputCCNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addMIDIInputNoteNode(at position: CGPoint) {
+        let noteIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .midiNoteInput = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "MIDI Note In \(noteIndex)",
+            kind: .midiNoteInput,
+            position: position,
+            inputPorts: [],
+            outputPorts: [
+                GraphPort(id: "midinotein:\(nodeID.uuidString):note", nodeID: nodeID, name: "Note", direction: .output, kind: .scalarSignal("note")),
+                GraphPort(id: "midinotein:\(nodeID.uuidString):velocity", nodeID: nodeID, name: "Velocity", direction: .output, kind: .scalarSignal("velocity")),
+                GraphPort(id: "midinotein:\(nodeID.uuidString):normalized", nodeID: nodeID, name: "Normalized", direction: .output, kind: .scalarSignal("normalized")),
+                GraphPort(id: "midinotein:\(nodeID.uuidString):gate", nodeID: nodeID, name: "Gate", direction: .output, kind: .scalarSignal("gate")),
+                GraphPort(id: "midinotein:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        midiInputNoteNodeSettings[nodeID] = MIDIInputNoteNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCInputNode(at position: CGPoint) {
+        let inputIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .oscInput = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC In \(inputIndex)",
+            kind: .oscInput,
+            position: position,
+            inputPorts: [],
+            outputPorts: [
+                GraphPort(id: "oscin:\(nodeID.uuidString):float", nodeID: nodeID, name: "Float", direction: .output, kind: .scalarSignal("float")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):int", nodeID: nodeID, name: "Int", direction: .output, kind: .scalarSignal("int")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .output, kind: .scalarSignal("float2")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .output, kind: .scalarSignal("int2")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .output, kind: .scalarSignal("float3")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .output, kind: .scalarSignal("int3")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .output, kind: .scalarSignal("float4")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .output, kind: .scalarSignal("int4")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):text", nodeID: nodeID, name: "Text", direction: .output, kind: .stringSignal("text")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .output, kind: .stringSignal("text2")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .output, kind: .stringSignal("text3")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .output, kind: .stringSignal("text4")),
+                GraphPort(id: "oscin:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        let settings = OSCInputNodeSettings()
+        oscInputNodeSettings[nodeID] = settings
+        oscInputRouter.ensureListening(on: settings.port)
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCOutputNode(at position: CGPoint) {
+        let outputIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .oscOutput = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Out \(outputIndex)",
+            kind: .oscOutput,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscout:\(nodeID.uuidString):float", nodeID: nodeID, name: "Float", direction: .input, kind: .scalarSignal("float")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):int", nodeID: nodeID, name: "Int", direction: .input, kind: .scalarSignal("int")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):text", nodeID: nodeID, name: "Text", direction: .input, kind: .stringSignal("text")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .input, kind: .scalarSignal("float2")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .input, kind: .scalarSignal("int2")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .input, kind: .stringSignal("text2")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .input, kind: .scalarSignal("float3")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .input, kind: .scalarSignal("int3")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .input, kind: .stringSignal("text3")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .input, kind: .scalarSignal("float4")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .input, kind: .scalarSignal("int4")),
+                GraphPort(id: "oscout:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .input, kind: .stringSignal("text4"))
+            ],
+            outputPorts: []
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        oscOutputNodeSettings[nodeID] = OSCOutputNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCReceiveNode(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscReceive = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Receive \(index)",
+            kind: .oscReceive,
+            position: position,
+            inputPorts: [],
+            outputPorts: [
+                GraphPort(id: "oscreceive:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet")),
+                GraphPort(id: "oscreceive:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger")),
+                GraphPort(id: "oscreceive:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        let settings = OSCInputNodeSettings()
+        oscInputNodeSettings[nodeID] = settings
+        oscInputRouter.ensureListening(on: settings.port)
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCGet4Node(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscGet4 = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Get 4 \(index)",
+            kind: .oscGet4,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscget:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+            ],
+            outputPorts: [
+                GraphPort(id: "oscget:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):float1", nodeID: nodeID, name: "Float 1", direction: .output, kind: .scalarSignal("float1")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .output, kind: .scalarSignal("float2")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .output, kind: .scalarSignal("float3")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .output, kind: .scalarSignal("float4")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):int1", nodeID: nodeID, name: "Int 1", direction: .output, kind: .scalarSignal("int1")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .output, kind: .scalarSignal("int2")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .output, kind: .scalarSignal("int3")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .output, kind: .scalarSignal("int4")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):text1", nodeID: nodeID, name: "Text 1", direction: .output, kind: .stringSignal("text1")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .output, kind: .stringSignal("text2")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .output, kind: .stringSignal("text3")),
+                GraphPort(id: "oscget:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .output, kind: .stringSignal("text4"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCGetArrayNode(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscGetArray = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Get Array \(index)",
+            kind: .oscGetArray,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscgetarray:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+            ],
+            outputPorts: [
+                GraphPort(id: "oscgetarray:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address")),
+                GraphPort(id: "oscgetarray:\(nodeID.uuidString):array", nodeID: nodeID, name: "Array", direction: .output, kind: .scalarArraySignal("array"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCMake4Node(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscMake4 = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Make 4 \(index)",
+            kind: .oscMake4,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscmake:\(nodeID.uuidString):float1", nodeID: nodeID, name: "Float 1", direction: .input, kind: .scalarSignal("float1")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):int1", nodeID: nodeID, name: "Int 1", direction: .input, kind: .scalarSignal("int1")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):text1", nodeID: nodeID, name: "Text 1", direction: .input, kind: .stringSignal("text1")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .input, kind: .scalarSignal("float2")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .input, kind: .scalarSignal("int2")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .input, kind: .stringSignal("text2")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .input, kind: .scalarSignal("float3")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .input, kind: .scalarSignal("int3")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .input, kind: .stringSignal("text3")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .input, kind: .scalarSignal("float4")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .input, kind: .scalarSignal("int4")),
+                GraphPort(id: "oscmake:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .input, kind: .stringSignal("text4"))
+            ],
+            outputPorts: [
+                GraphPort(id: "oscmake:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        oscMessageNodeSettings[nodeID] = OSCMessageNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCMakeArrayNode(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscMakeArray = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Make Array \(index)",
+            kind: .oscMakeArray,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscmakearray:\(nodeID.uuidString):array", nodeID: nodeID, name: "Array", direction: .input, kind: .scalarArraySignal("array"))
+            ],
+            outputPorts: [
+                GraphPort(id: "oscmakearray:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        oscMessageNodeSettings[nodeID] = OSCMessageNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCBundleNode(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscBundle = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let settings = normalizedOSCBundleSettings(OSCBundleNodeSettings())
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Bundle \(index)",
+            kind: .oscBundle,
+            position: position,
+            inputPorts: makeOSCBundleInputPorts(nodeID: nodeID, packetCount: settings.packetCount),
+            outputPorts: [
+                GraphPort(id: "oscbundle:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        oscBundleNodeSettings[nodeID] = settings
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addOSCSendNode(at position: CGPoint) {
+        let nodeID = UUID()
+        let index = document.nodes.reduce(0) { partial, node in
+            guard case .oscSend = node.kind else { return partial }
+            return partial + 1
+        } + 1
+        let newNode = GraphNode(
+            id: nodeID,
+            title: "OSC Send \(index)",
+            kind: .oscSend,
+            position: position,
+            inputPorts: [
+                GraphPort(id: "oscsend:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+            ],
+            outputPorts: []
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        oscSendNodeSettings[nodeID] = OSCSendNodeSettings()
+        selectedNodeID = newNode.id
+        updateInspectorFocus()
         statusMessage = "Added \(newNode.title) to the graph."
     }
 
@@ -8346,6 +9469,30 @@ final class GraphStore: ObservableObject {
         statusMessage = "Added \(newNode.title) to the graph."
     }
 
+    func addScene3DGaussianSplatNode(at position: CGPoint, filename: String = "Gaussian Splat", bookmarkData: Data = Data()) {
+        let nodeIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .scene3DGaussianSplat = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: nodeIndex == 1 ? "Gaussian Splat" : "Gaussian Splat \(nodeIndex)",
+            kind: .scene3DGaussianSplat,
+            position: position,
+            inputPorts: makeScene3DGaussianSplatInputPorts(nodeID: nodeID),
+            outputPorts: makeScene3DGaussianSplatOutputPorts(nodeID: nodeID)
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        scene3DGaussianSplatNodeSettings[nodeID] = Scene3DGaussianSplatNodeSettings(filename: filename, bookmarkData: bookmarkData)
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
     func addScene3DParticleNode(at position: CGPoint) {
         let nodeIndex = document.nodes.reduce(0) { partialResult, node in
             guard case .scene3DParticle = node.kind else { return partialResult }
@@ -8368,6 +9515,105 @@ final class GraphStore: ObservableObject {
         updatedDocument.nodes.append(newNode)
         document = updatedDocument
         scene3DParticleNodeSettings[nodeID] = Scene3DParticleNodeSettings()
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addScene3DFishSchoolNode(at position: CGPoint) {
+        let nodeIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .scene3DParticle = node.kind, node.title.contains("Fish") else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: nodeIndex == 1 ? "3D Fish School" : "3D Fish School \(nodeIndex)",
+            kind: .scene3DParticle,
+            position: position,
+            inputPorts: makeScene3DParticleInputPorts(nodeID: nodeID),
+            outputPorts: [
+                GraphPort(id: "scene3dparticle:\(nodeID.uuidString):scene", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene")),
+                GraphPort(id: "scene3dparticle:\(nodeID.uuidString):output", nodeID: nodeID, name: "Shader", direction: .output, kind: .fragmentShader)
+            ]
+        )
+
+        var settings = Scene3DParticleNodeSettings()
+        settings.shape = .point
+        settings.blendMode = .alpha
+        settings.spriteStyle = .fish
+        settings.scale = 1.0
+        settings.particleCount = 120.0
+        settings.birthRate = 10.0
+        settings.lifetime = 22.0
+        settings.speed = 0.2
+        settings.spread = 4.0
+        settings.size = 0.16
+        settings.red = 0.75
+        settings.green = 0.95
+        settings.blue = 1.0
+        settings.alpha = 0.85
+        settings.spriteSheetColumns = 4.0
+        settings.spriteSheetRows = 2.0
+        settings.spriteSheetCount = 8.0
+        settings.spriteSheetRandom = true
+        settings.spriteWobble = 0.0
+        settings.spriteWobbleSpeed = 1.0
+        settings.gravityY = 0.0
+        settings.cameraDistance = 8.0
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        scene3DParticleNodeSettings[nodeID] = settings
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addScene3DDustHazeNode(at position: CGPoint) {
+        let nodeIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .scene3DParticle = node.kind, node.title.contains("Dust") else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: nodeIndex == 1 ? "3D Dust Haze" : "3D Dust Haze \(nodeIndex)",
+            kind: .scene3DParticle,
+            position: position,
+            inputPorts: makeScene3DParticleInputPorts(nodeID: nodeID),
+            outputPorts: [
+                GraphPort(id: "scene3dparticle:\(nodeID.uuidString):scene", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene")),
+                GraphPort(id: "scene3dparticle:\(nodeID.uuidString):output", nodeID: nodeID, name: "Shader", direction: .output, kind: .fragmentShader)
+            ]
+        )
+
+        var settings = Scene3DParticleNodeSettings()
+        settings.shape = .box
+        settings.blendMode = .screen
+        settings.spriteStyle = .dust
+        settings.scale = 1.0
+        settings.particleCount = 2600.0
+        settings.birthRate = 520.0
+        settings.lifetime = 14.0
+        settings.speed = 0.055
+        settings.spread = 8.0
+        settings.boxWidth = 58.0
+        settings.boxHeight = 2.5
+        settings.boxDepth = 36.0
+        settings.size = 0.28
+        settings.red = 0.95
+        settings.green = 0.72
+        settings.blue = 0.42
+        settings.alpha = 0.22
+        settings.gravityY = 0.015
+        settings.cameraDistance = 8.0
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        scene3DParticleNodeSettings[nodeID] = settings
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
         statusMessage = "Added \(newNode.title) to the graph."
@@ -8510,6 +9756,66 @@ final class GraphStore: ObservableObject {
         ]
     }
 
+    private func makeScene3DGaussianSplatInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):x", nodeID: nodeID, name: "X", direction: .input, kind: .scalarSignal("x")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):y", nodeID: nodeID, name: "Y", direction: .input, kind: .scalarSignal("y")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):z", nodeID: nodeID, name: "Z", direction: .input, kind: .scalarSignal("z")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):scale", nodeID: nodeID, name: "Scale", direction: .input, kind: .scalarSignal("scale")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):rotationX", nodeID: nodeID, name: "Rotation X", direction: .input, kind: .scalarSignal("rotationX")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):rotationY", nodeID: nodeID, name: "Rotation Y", direction: .input, kind: .scalarSignal("rotationY")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):rotationZ", nodeID: nodeID, name: "Rotation Z", direction: .input, kind: .scalarSignal("rotationZ")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):distance", nodeID: nodeID, name: "Camera Distance", direction: .input, kind: .scalarSignal("distance")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):orbit", nodeID: nodeID, name: "Orbit", direction: .input, kind: .scalarSignal("orbit")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):pitch", nodeID: nodeID, name: "Pitch", direction: .input, kind: .scalarSignal("pitch")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):panX", nodeID: nodeID, name: "Pan X", direction: .input, kind: .scalarSignal("panX")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):panY", nodeID: nodeID, name: "Pan Y", direction: .input, kind: .scalarSignal("panY")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):pointSize", nodeID: nodeID, name: "Point Size", direction: .input, kind: .scalarSignal("pointSize")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):opacity", nodeID: nodeID, name: "Opacity", direction: .input, kind: .scalarSignal("opacity")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):explode", nodeID: nodeID, name: "Explode", direction: .input, kind: .scalarSignal("explode")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):chaos", nodeID: nodeID, name: "Chaos", direction: .input, kind: .scalarSignal("chaos")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):particleSpeed", nodeID: nodeID, name: "Particle Speed", direction: .input, kind: .scalarSignal("particleSpeed")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):particleGravity", nodeID: nodeID, name: "Particle Gravity", direction: .input, kind: .scalarSignal("particleGravity")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):particleTurbulence", nodeID: nodeID, name: "Particle Turbulence", direction: .input, kind: .scalarSignal("particleTurbulence")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):particleBoundary", nodeID: nodeID, name: "Particle Boundary", direction: .input, kind: .scalarSignal("particleBoundary")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):panoramaRadius", nodeID: nodeID, name: "Pano Radius", direction: .input, kind: .scalarSignal("panoRadius")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):panoramaDepthScale", nodeID: nodeID, name: "Pano Depth", direction: .input, kind: .scalarSignal("panoDepth"))
+        ]
+    }
+
+    private func makeScene3DGaussianSplatOutputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):scene", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):output", nodeID: nodeID, name: "Shader", direction: .output, kind: .fragmentShader),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):loading", nodeID: nodeID, name: "Loading", direction: .output, kind: .scalarSignal("loading")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):progress", nodeID: nodeID, name: "Progress", direction: .output, kind: .scalarSignal("progress")),
+            GraphPort(id: "gaussiansplat:\(nodeID.uuidString):status", nodeID: nodeID, name: "Status", direction: .output, kind: .stringSignal("status"))
+        ]
+    }
+
+    private func ensureScene3DGaussianSplatPorts(for nodeID: GraphNode.ID) {
+        guard let index = document.nodes.firstIndex(where: { $0.id == nodeID }) else { return }
+        guard case .scene3DGaussianSplat = document.nodes[index].kind else { return }
+
+        let inputPorts = makeScene3DGaussianSplatInputPorts(nodeID: nodeID)
+        let outputPorts = makeScene3DGaussianSplatOutputPorts(nodeID: nodeID)
+        guard document.nodes[index].inputPorts.count != inputPorts.count ||
+                document.nodes[index].outputPorts.count != outputPorts.count else {
+            return
+        }
+
+        var updatedDocument = document
+        updatedDocument.nodes[index] = GraphNode(
+            id: updatedDocument.nodes[index].id,
+            title: updatedDocument.nodes[index].title,
+            kind: updatedDocument.nodes[index].kind,
+            position: updatedDocument.nodes[index].position,
+            inputPorts: inputPorts,
+            outputPorts: outputPorts
+        )
+        document = updatedDocument
+    }
+
     private func makeScene3DParticleInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
         [
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):x", nodeID: nodeID, name: "X", direction: .input, kind: .scalarSignal("x")),
@@ -8524,6 +9830,9 @@ final class GraphStore: ObservableObject {
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):lifetime", nodeID: nodeID, name: "Lifetime", direction: .input, kind: .scalarSignal("lifetime")),
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):speed", nodeID: nodeID, name: "Speed", direction: .input, kind: .scalarSignal("speed")),
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):spread", nodeID: nodeID, name: "Spread", direction: .input, kind: .scalarSignal("spread")),
+            GraphPort(id: "scene3dparticle:\(nodeID.uuidString):boxWidth", nodeID: nodeID, name: "Box Width", direction: .input, kind: .scalarSignal("boxWidth")),
+            GraphPort(id: "scene3dparticle:\(nodeID.uuidString):boxHeight", nodeID: nodeID, name: "Box Height", direction: .input, kind: .scalarSignal("boxHeight")),
+            GraphPort(id: "scene3dparticle:\(nodeID.uuidString):boxDepth", nodeID: nodeID, name: "Box Depth", direction: .input, kind: .scalarSignal("boxDepth")),
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):size", nodeID: nodeID, name: "Size", direction: .input, kind: .scalarSignal("size")),
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):gravityY", nodeID: nodeID, name: "Gravity Y", direction: .input, kind: .scalarSignal("gravityY")),
             GraphPort(id: "scene3dparticle:\(nodeID.uuidString):color", nodeID: nodeID, name: "Color", direction: .input, kind: .colorSignal("color")),
@@ -8749,6 +10058,26 @@ final class GraphStore: ObservableObject {
             }
             document = updatedDocument
             scene3DModelNodeSettings.removeValue(forKey: nodeID)
+            selectedNodeID = nil
+            selectedNodeIDs.remove(nodeID)
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.document.nodes.contains(where: { $0.id == nodeID }) == false else { return }
+                self.selectedNodeID = self.primaryFragmentNode?.id ?? self.renderNode?.id ?? self.document.nodes.last?.id
+                self.updateInspectorFocus()
+            }
+        case .scene3DGaussianSplat:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            scene3DGaussianSplatNodeSettings.removeValue(forKey: nodeID)
+            GaussianSplatLoadProgressStore.shared.remove(nodeID: nodeID)
             selectedNodeID = nil
             selectedNodeIDs.remove(nodeID)
             inspectorFocusTarget = .nodeLibrary
@@ -9542,6 +10871,142 @@ final class GraphStore: ObservableObject {
             selectedNodeID = primaryFragmentNode?.id
             inspectorFocusTarget = .nodeLibrary
             statusMessage = "\(node.title) removed from graph."
+        case .midiCCInput:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            midiInputCCNodeSettings.removeValue(forKey: nodeID)
+            midiInputCCNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .midiNoteInput:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            midiInputNoteNodeSettings.removeValue(forKey: nodeID)
+            midiInputNoteNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscInput:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscInputNodeSettings.removeValue(forKey: nodeID)
+            oscInputNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscOutput:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscOutputNodeSettings.removeValue(forKey: nodeID)
+            oscOutputNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscReceive:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscInputNodeSettings.removeValue(forKey: nodeID)
+            oscInputNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscSend:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscSendNodeSettings.removeValue(forKey: nodeID)
+            oscOutputNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscGet4:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscGetArray:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscBundle:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscBundleNodeSettings.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscMake4:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscMessageNodeSettings.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .oscMakeArray:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            oscMessageNodeSettings.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
         case .note:
             var updatedDocument = document
             updatedDocument.nodes.removeAll { $0.id == nodeID }
@@ -9883,6 +11348,19 @@ final class GraphStore: ObservableObject {
             document = updatedDocument
             holdNodeSettings.removeValue(forKey: nodeID)
             holdNodeRuntimeStates.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .scalarSmooth:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            scalarSmoothNodeSettings.removeValue(forKey: nodeID)
+            scalarSmoothNodeRuntimeStates.removeValue(forKey: nodeID)
             selectedNodeID = primaryFragmentNode?.id
             inspectorFocusTarget = .nodeLibrary
             statusMessage = "\(node.title) removed from graph."
@@ -10588,6 +12066,8 @@ final class GraphStore: ObservableObject {
             return settings(forVideoPlayerNodeID: node.id).isPlaying ? 1.0 : 0.0
         case .videoPlayer where port.name == "Seek":
             return settings(forVideoPlayerNodeID: node.id).seekPosition
+        case .videoPlayer where port.name == "Volume":
+            return settings(forVideoPlayerNodeID: node.id).volume
         case .feedback where port.name == "Level":
             return settings(forFeedbackNodeID: node.id).level
         case .circle where port.name == "Radius":
@@ -10612,6 +12092,12 @@ final class GraphStore: ObservableObject {
             return settings(forScaleNodeID: node.id).scaledMin
         case .scale where port.name == "Scaled Max":
             return settings(forScaleNodeID: node.id).scaledMax
+        case .scalarSmooth where port.name == "Target":
+            return settings(forScalarSmoothNodeID: node.id).initialValue
+        case .scalarSmooth where port.name == "Amount":
+            return settings(forScalarSmoothNodeID: node.id).amount
+        case .scalarSmooth where port.name == "Inertia":
+            return settings(forScalarSmoothNodeID: node.id).inertia
         case .pointScale where port.name == "Scale":
             return settings(forPointScaleNodeID: node.id).scale
         case .point3Scale where port.name == "Scale":
@@ -10800,6 +12286,50 @@ final class GraphStore: ObservableObject {
             return settings(forScene3DModelNodeID: node.id).animationClipEnd
         case .scene3DModel where port.name == "Anim Speed":
             return settings(forScene3DModelNodeID: node.id).animationSpeed
+        case .scene3DGaussianSplat where port.name == "X":
+            return settings(forScene3DGaussianSplatNodeID: node.id).positionX
+        case .scene3DGaussianSplat where port.name == "Y":
+            return settings(forScene3DGaussianSplatNodeID: node.id).positionY
+        case .scene3DGaussianSplat where port.name == "Z":
+            return settings(forScene3DGaussianSplatNodeID: node.id).positionZ
+        case .scene3DGaussianSplat where port.name == "Scale":
+            return settings(forScene3DGaussianSplatNodeID: node.id).scale
+        case .scene3DGaussianSplat where port.name == "Rotation X":
+            return settings(forScene3DGaussianSplatNodeID: node.id).rotationX
+        case .scene3DGaussianSplat where port.name == "Rotation Y":
+            return settings(forScene3DGaussianSplatNodeID: node.id).rotationY
+        case .scene3DGaussianSplat where port.name == "Rotation Z":
+            return settings(forScene3DGaussianSplatNodeID: node.id).rotationZ
+        case .scene3DGaussianSplat where port.name == "Camera Distance":
+            return settings(forScene3DGaussianSplatNodeID: node.id).cameraDistance
+        case .scene3DGaussianSplat where port.name == "Orbit":
+            return settings(forScene3DGaussianSplatNodeID: node.id).cameraOrbit
+        case .scene3DGaussianSplat where port.name == "Pitch":
+            return settings(forScene3DGaussianSplatNodeID: node.id).cameraPitch
+        case .scene3DGaussianSplat where port.name == "Pan X":
+            return settings(forScene3DGaussianSplatNodeID: node.id).cameraPanX
+        case .scene3DGaussianSplat where port.name == "Pan Y":
+            return settings(forScene3DGaussianSplatNodeID: node.id).cameraPanY
+        case .scene3DGaussianSplat where port.name == "Point Size":
+            return settings(forScene3DGaussianSplatNodeID: node.id).pointSize
+        case .scene3DGaussianSplat where port.name == "Opacity":
+            return settings(forScene3DGaussianSplatNodeID: node.id).opacity
+        case .scene3DGaussianSplat where port.name == "Explode":
+            return settings(forScene3DGaussianSplatNodeID: node.id).explode
+        case .scene3DGaussianSplat where port.name == "Chaos":
+            return settings(forScene3DGaussianSplatNodeID: node.id).chaos
+        case .scene3DGaussianSplat where port.name == "Particle Speed":
+            return settings(forScene3DGaussianSplatNodeID: node.id).particleSpeed
+        case .scene3DGaussianSplat where port.name == "Particle Gravity":
+            return settings(forScene3DGaussianSplatNodeID: node.id).particleGravity
+        case .scene3DGaussianSplat where port.name == "Particle Turbulence":
+            return settings(forScene3DGaussianSplatNodeID: node.id).particleTurbulence
+        case .scene3DGaussianSplat where port.name == "Particle Boundary":
+            return settings(forScene3DGaussianSplatNodeID: node.id).particleBoundary
+        case .scene3DGaussianSplat where port.name == "Pano Radius":
+            return settings(forScene3DGaussianSplatNodeID: node.id).panoramaRadius
+        case .scene3DGaussianSplat where port.name == "Pano Depth":
+            return settings(forScene3DGaussianSplatNodeID: node.id).panoramaDepthScale
         case .scene3DParticle where port.name == "X":
             return settings(forScene3DParticleNodeID: node.id).positionX
         case .scene3DParticle where port.name == "Y":
@@ -10824,10 +12354,32 @@ final class GraphStore: ObservableObject {
             return settings(forScene3DParticleNodeID: node.id).speed
         case .scene3DParticle where port.name == "Spread":
             return settings(forScene3DParticleNodeID: node.id).spread
+        case .scene3DParticle where port.name == "Box Width":
+            return settings(forScene3DParticleNodeID: node.id).boxWidth
+        case .scene3DParticle where port.name == "Box Height":
+            return settings(forScene3DParticleNodeID: node.id).boxHeight
+        case .scene3DParticle where port.name == "Box Depth":
+            return settings(forScene3DParticleNodeID: node.id).boxDepth
         case .scene3DParticle where port.name == "Size":
             return settings(forScene3DParticleNodeID: node.id).size
         case .scene3DParticle where port.name == "Gravity Y":
             return settings(forScene3DParticleNodeID: node.id).gravityY
+        case .oscMake4 where port.name == "Float 1":
+            return settings(forOSCMessageNodeID: node.id).float1
+        case .oscMake4 where port.name == "Int 1":
+            return settings(forOSCMessageNodeID: node.id).int1
+        case .oscMake4 where port.name == "Float 2":
+            return settings(forOSCMessageNodeID: node.id).float2
+        case .oscMake4 where port.name == "Int 2":
+            return settings(forOSCMessageNodeID: node.id).int2
+        case .oscMake4 where port.name == "Float 3":
+            return settings(forOSCMessageNodeID: node.id).float3
+        case .oscMake4 where port.name == "Int 3":
+            return settings(forOSCMessageNodeID: node.id).int3
+        case .oscMake4 where port.name == "Float 4":
+            return settings(forOSCMessageNodeID: node.id).float4
+        case .oscMake4 where port.name == "Int 4":
+            return settings(forOSCMessageNodeID: node.id).int4
         case .layers:
             let settings = settings(forLayerNodeID: node.id)
             if port.name == "Opacity" {
@@ -10902,6 +12454,14 @@ final class GraphStore: ObservableObject {
             return settings(forSelectNodeID: node.id).stringA
         case .stringSwitch where port.name == "B":
             return settings(forSelectNodeID: node.id).stringB
+        case .oscMake4 where port.name == "Text 1":
+            return settings(forOSCMessageNodeID: node.id).text1
+        case .oscMake4 where port.name == "Text 2":
+            return settings(forOSCMessageNodeID: node.id).text2
+        case .oscMake4 where port.name == "Text 3":
+            return settings(forOSCMessageNodeID: node.id).text3
+        case .oscMake4 where port.name == "Text 4":
+            return settings(forOSCMessageNodeID: node.id).text4
         default:
             return nil
         }
@@ -11199,6 +12759,8 @@ final class GraphStore: ObservableObject {
             updateVideoPlayerNodeSettings(node.id) { $0.isPlaying = value >= 0.5 }
         case .videoPlayer where port.name == "Seek":
             updateVideoPlayerNodeSettings(node.id) { $0.seekPosition = value }
+        case .videoPlayer where port.name == "Volume":
+            updateVideoPlayerNodeSettings(node.id) { $0.volume = value }
         case .feedback where port.name == "Level":
             updateFeedbackNodeSettings(node.id) { $0.level = value }
         case .circle where port.name == "Radius":
@@ -11223,6 +12785,12 @@ final class GraphStore: ObservableObject {
             updateScaleNodeSettings(node.id) { $0.scaledMin = value }
         case .scale where port.name == "Scaled Max":
             updateScaleNodeSettings(node.id) { $0.scaledMax = value }
+        case .scalarSmooth where port.name == "Target":
+            updateScalarSmoothNodeSettings(node.id) { $0.initialValue = value }
+        case .scalarSmooth where port.name == "Amount":
+            updateScalarSmoothNodeSettings(node.id) { $0.amount = value }
+        case .scalarSmooth where port.name == "Inertia":
+            updateScalarSmoothNodeSettings(node.id) { $0.inertia = value }
         case .pointScale where port.name == "Scale":
             updatePointScaleNodeSettings(node.id) { $0.scale = value }
         case .point3Scale where port.name == "Scale":
@@ -11411,6 +12979,50 @@ final class GraphStore: ObservableObject {
             updateScene3DModelNodeSettings(node.id) { $0.animationClipEnd = value }
         case .scene3DModel where port.name == "Anim Speed":
             updateScene3DModelNodeSettings(node.id) { $0.animationSpeed = value }
+        case .scene3DGaussianSplat where port.name == "X":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.positionX = value }
+        case .scene3DGaussianSplat where port.name == "Y":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.positionY = value }
+        case .scene3DGaussianSplat where port.name == "Z":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.positionZ = value }
+        case .scene3DGaussianSplat where port.name == "Scale":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.scale = value }
+        case .scene3DGaussianSplat where port.name == "Rotation X":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.rotationX = value }
+        case .scene3DGaussianSplat where port.name == "Rotation Y":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.rotationY = value }
+        case .scene3DGaussianSplat where port.name == "Rotation Z":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.rotationZ = value }
+        case .scene3DGaussianSplat where port.name == "Camera Distance":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.cameraDistance = value }
+        case .scene3DGaussianSplat where port.name == "Orbit":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.cameraOrbit = value }
+        case .scene3DGaussianSplat where port.name == "Pitch":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.cameraPitch = value }
+        case .scene3DGaussianSplat where port.name == "Pan X":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.cameraPanX = value }
+        case .scene3DGaussianSplat where port.name == "Pan Y":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.cameraPanY = value }
+        case .scene3DGaussianSplat where port.name == "Point Size":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.pointSize = value }
+        case .scene3DGaussianSplat where port.name == "Opacity":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.opacity = value }
+        case .scene3DGaussianSplat where port.name == "Explode":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.explode = value }
+        case .scene3DGaussianSplat where port.name == "Chaos":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.chaos = value }
+        case .scene3DGaussianSplat where port.name == "Particle Speed":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.particleSpeed = value }
+        case .scene3DGaussianSplat where port.name == "Particle Gravity":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.particleGravity = value }
+        case .scene3DGaussianSplat where port.name == "Particle Turbulence":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.particleTurbulence = value }
+        case .scene3DGaussianSplat where port.name == "Particle Boundary":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.particleBoundary = value }
+        case .scene3DGaussianSplat where port.name == "Pano Radius":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.panoramaRadius = value }
+        case .scene3DGaussianSplat where port.name == "Pano Depth":
+            updateScene3DGaussianSplatNodeSettings(node.id) { $0.panoramaDepthScale = value }
         case .scene3DParticle where port.name == "X":
             updateScene3DParticleNodeSettings(node.id) { $0.positionX = value }
         case .scene3DParticle where port.name == "Y":
@@ -11435,10 +13047,32 @@ final class GraphStore: ObservableObject {
             updateScene3DParticleNodeSettings(node.id) { $0.speed = value }
         case .scene3DParticle where port.name == "Spread":
             updateScene3DParticleNodeSettings(node.id) { $0.spread = value }
+        case .scene3DParticle where port.name == "Box Width":
+            updateScene3DParticleNodeSettings(node.id) { $0.boxWidth = value }
+        case .scene3DParticle where port.name == "Box Height":
+            updateScene3DParticleNodeSettings(node.id) { $0.boxHeight = value }
+        case .scene3DParticle where port.name == "Box Depth":
+            updateScene3DParticleNodeSettings(node.id) { $0.boxDepth = value }
         case .scene3DParticle where port.name == "Size":
             updateScene3DParticleNodeSettings(node.id) { $0.size = value }
         case .scene3DParticle where port.name == "Gravity Y":
             updateScene3DParticleNodeSettings(node.id) { $0.gravityY = value }
+        case .oscMake4 where port.name == "Float 1":
+            updateOSCMessageNodeSettings(node.id) { $0.float1 = value }
+        case .oscMake4 where port.name == "Int 1":
+            updateOSCMessageNodeSettings(node.id) { $0.int1 = value }
+        case .oscMake4 where port.name == "Float 2":
+            updateOSCMessageNodeSettings(node.id) { $0.float2 = value }
+        case .oscMake4 where port.name == "Int 2":
+            updateOSCMessageNodeSettings(node.id) { $0.int2 = value }
+        case .oscMake4 where port.name == "Float 3":
+            updateOSCMessageNodeSettings(node.id) { $0.float3 = value }
+        case .oscMake4 where port.name == "Int 3":
+            updateOSCMessageNodeSettings(node.id) { $0.int3 = value }
+        case .oscMake4 where port.name == "Float 4":
+            updateOSCMessageNodeSettings(node.id) { $0.float4 = value }
+        case .oscMake4 where port.name == "Int 4":
+            updateOSCMessageNodeSettings(node.id) { $0.int4 = value }
         case .layers:
             if port.name == "Opacity" {
                 updateLayerNodeSettings(node.id) { $0.opacity = value }
@@ -11521,6 +13155,14 @@ final class GraphStore: ObservableObject {
             updateSelectNodeSettings(node.id) { $0.stringA = value }
         case .stringSwitch where port.name == "B":
             updateSelectNodeSettings(node.id) { $0.stringB = value }
+        case .oscMake4 where port.name == "Text 1":
+            updateOSCMessageNodeSettings(node.id) { $0.text1 = value }
+        case .oscMake4 where port.name == "Text 2":
+            updateOSCMessageNodeSettings(node.id) { $0.text2 = value }
+        case .oscMake4 where port.name == "Text 3":
+            updateOSCMessageNodeSettings(node.id) { $0.text3 = value }
+        case .oscMake4 where port.name == "Text 4":
+            updateOSCMessageNodeSettings(node.id) { $0.text4 = value }
         default:
             break
         }
@@ -11699,6 +13341,10 @@ final class GraphStore: ObservableObject {
         holdNodeSettings[nodeID] ?? HoldNodeSettings()
     }
 
+    func settings(forScalarSmoothNodeID nodeID: GraphNode.ID) -> ScalarSmoothNodeSettings {
+        scalarSmoothNodeSettings[nodeID] ?? ScalarSmoothNodeSettings()
+    }
+
     func settings(forHandTrackerNodeID nodeID: GraphNode.ID) -> HandTrackerNodeSettings {
         handTrackerNodeSettings[nodeID] ?? HandTrackerNodeSettings()
     }
@@ -11716,7 +13362,12 @@ final class GraphStore: ObservableObject {
     }
 
     func settings(forTrackballNodeID nodeID: GraphNode.ID) -> TrackballNodeSettings {
-        trackballNodeSettings[nodeID] ?? TrackballNodeSettings()
+        var settings = trackballNodeSettings[nodeID] ?? TrackballNodeSettings()
+        if settings.minDistance >= 1.0, settings.maxDistance <= 30.0 {
+            settings.minDistance = -200.0
+            settings.maxDistance = 200.0
+        }
+        return settings
     }
 
     func settings(forDepthEstimateNodeID nodeID: GraphNode.ID) -> DepthEstimateNodeSettings {
@@ -12128,6 +13779,34 @@ final class GraphStore: ObservableObject {
         return settings
     }
 
+    func settings(forMIDIInputCCNodeID nodeID: GraphNode.ID) -> MIDIInputCCNodeSettings {
+        midiInputCCNodeSettings[nodeID] ?? MIDIInputCCNodeSettings()
+    }
+
+    func settings(forMIDIInputNoteNodeID nodeID: GraphNode.ID) -> MIDIInputNoteNodeSettings {
+        midiInputNoteNodeSettings[nodeID] ?? MIDIInputNoteNodeSettings()
+    }
+
+    func settings(forOSCInputNodeID nodeID: GraphNode.ID) -> OSCInputNodeSettings {
+        oscInputNodeSettings[nodeID] ?? OSCInputNodeSettings()
+    }
+
+    func settings(forOSCOutputNodeID nodeID: GraphNode.ID) -> OSCOutputNodeSettings {
+        oscOutputNodeSettings[nodeID] ?? OSCOutputNodeSettings()
+    }
+
+    func settings(forOSCSendNodeID nodeID: GraphNode.ID) -> OSCSendNodeSettings {
+        oscSendNodeSettings[nodeID] ?? OSCSendNodeSettings()
+    }
+
+    func settings(forOSCMessageNodeID nodeID: GraphNode.ID) -> OSCMessageNodeSettings {
+        oscMessageNodeSettings[nodeID] ?? OSCMessageNodeSettings()
+    }
+
+    func settings(forOSCBundleNodeID nodeID: GraphNode.ID) -> OSCBundleNodeSettings {
+        normalizedOSCBundleSettings(oscBundleNodeSettings[nodeID] ?? OSCBundleNodeSettings())
+    }
+
     func settings(forNoteNodeID nodeID: GraphNode.ID) -> NoteNodeSettings {
         noteNodeSettings[nodeID] ?? NoteNodeSettings()
     }
@@ -12303,6 +13982,45 @@ final class GraphStore: ObservableObject {
         objectWillChange.send()
     }
 
+    func updateScalarSmoothNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout ScalarSmoothNodeSettings) -> Void) {
+        var settings = scalarSmoothNodeSettings[nodeID] ?? ScalarSmoothNodeSettings()
+        mutate(&settings)
+        settings.amount = min(max(settings.amount, 0.0), 1.0)
+        settings.inertia = min(max(settings.inertia, 0.0), 0.99)
+        scalarSmoothNodeSettings[nodeID] = settings
+        let existing = scalarSmoothNodeRuntimeStates[nodeID] ?? ScalarSmoothNodeRuntimeState(value: settings.initialValue)
+        scalarSmoothNodeRuntimeStates[nodeID] = existing
+        updateMIDINodes()
+        objectWillChange.send()
+    }
+
+    private func scalarSmoothValue(for sourceNode: GraphNode, visitedNodeIDs: Set<GraphNode.ID>) -> Double {
+        let settings = settings(forScalarSmoothNodeID: sourceNode.id)
+        let scopedVisitedNodeIDs = visitedNodeIDs.union([sourceNode.id])
+        var runtime = scalarSmoothNodeRuntimeStates[sourceNode.id] ?? ScalarSmoothNodeRuntimeState(value: settings.initialValue)
+        let targetInput = sourceNode.inputPorts.first(where: { $0.name == "Target" })
+        let amountInput = sourceNode.inputPorts.first(where: { $0.name == "Amount" })
+        let inertiaInput = sourceNode.inputPorts.first(where: { $0.name == "Inertia" })
+        let target = targetInput.flatMap { scalarValue(forInputPortID: $0.id, visitedNodeIDs: scopedVisitedNodeIDs) } ?? settings.initialValue
+        let amount = min(max(amountInput.flatMap { scalarValue(forInputPortID: $0.id, visitedNodeIDs: scopedVisitedNodeIDs) } ?? settings.amount, 0.0), 1.0)
+        let inertia = min(max(inertiaInput.flatMap { scalarValue(forInputPortID: $0.id, visitedNodeIDs: scopedVisitedNodeIDs) } ?? settings.inertia, 0.0), 0.99)
+
+        switch settings.mode {
+        case .smooth:
+            runtime.velocity = 0.0
+            runtime.value += (target - runtime.value) * amount
+        case .inertia:
+            runtime.velocity = (runtime.velocity * inertia) + ((target - runtime.value) * amount)
+            runtime.value += runtime.velocity
+        }
+
+        if runtime.value.isFinite == false {
+            runtime = ScalarSmoothNodeRuntimeState(value: settings.initialValue)
+        }
+        scalarSmoothNodeRuntimeStates[sourceNode.id] = runtime
+        return runtime.value
+    }
+
     func updateHandTrackerNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout HandTrackerNodeSettings) -> Void) {
         var settings = handTrackerNodeSettings[nodeID] ?? HandTrackerNodeSettings()
         mutate(&settings)
@@ -12355,7 +14073,8 @@ final class GraphStore: ObservableObject {
         settings.panSensitivity = min(max(settings.panSensitivity, 0.1), 20.0)
         settings.zoomSensitivity = min(max(settings.zoomSensitivity, 0.05), 10.0)
         settings.initialPitch = min(max(settings.initialPitch, -89.0), 89.0)
-        settings.minDistance = max(0.1, settings.minDistance)
+        settings.minDistance = max(-200.0, settings.minDistance)
+        settings.maxDistance = min(200.0, settings.maxDistance)
         settings.maxDistance = max(settings.minDistance, settings.maxDistance)
         settings.initialDistance = min(max(settings.initialDistance, settings.minDistance), settings.maxDistance)
         trackballNodeSettings[nodeID] = settings
@@ -12652,9 +14371,6 @@ final class GraphStore: ObservableObject {
     func updateExpressionNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout ExpressionNodeSettings) -> Void) {
         var settings = settings(forExpressionNodeID: nodeID)
         mutate(&settings)
-        if settings.expression.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            settings.expression = "a"
-        }
         let variableNames = Self.expressionVariableNames(in: settings.expression)
         var normalizedVariables: [String: Double] = [:]
         for name in variableNames {
@@ -12820,6 +14536,79 @@ final class GraphStore: ObservableObject {
         objectWillChange.send()
     }
 
+    func updateMIDIInputCCNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout MIDIInputCCNodeSettings) -> Void) {
+        var settings = settings(forMIDIInputCCNodeID: nodeID)
+        mutate(&settings)
+        settings.ccNumber = min(max(0, settings.ccNumber), 127)
+        settings.channel = min(max(0, settings.channel), 15)
+        midiInputCCNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateMIDIInputNoteNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout MIDIInputNoteNodeSettings) -> Void) {
+        var settings = settings(forMIDIInputNoteNodeID: nodeID)
+        mutate(&settings)
+        settings.noteNumber = min(max(0, settings.noteNumber), 127)
+        settings.channel = min(max(0, settings.channel), 15)
+        midiInputNoteNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateOSCInputNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout OSCInputNodeSettings) -> Void) {
+        var settings = settings(forOSCInputNodeID: nodeID)
+        mutate(&settings)
+        settings.port = min(max(1, settings.port), 65535)
+        settings.address = normalizedOSCAddress(settings.address)
+        oscInputNodeSettings[nodeID] = settings
+        oscInputRouter.ensureListening(on: settings.port)
+        objectWillChange.send()
+    }
+
+    func updateOSCOutputNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout OSCOutputNodeSettings) -> Void) {
+        var settings = settings(forOSCOutputNodeID: nodeID)
+        mutate(&settings)
+        settings.host = settings.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if settings.host.isEmpty {
+            settings.host = "127.0.0.1"
+        }
+        settings.port = min(max(1, settings.port), 65535)
+        settings.address = normalizedOSCAddress(settings.address)
+        oscOutputNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateOSCSendNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout OSCSendNodeSettings) -> Void) {
+        var settings = settings(forOSCSendNodeID: nodeID)
+        mutate(&settings)
+        settings.host = settings.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        if settings.host.isEmpty {
+            settings.host = "127.0.0.1"
+        }
+        settings.port = min(max(1, settings.port), 65535)
+        oscSendNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateOSCMessageNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout OSCMessageNodeSettings) -> Void) {
+        var settings = settings(forOSCMessageNodeID: nodeID)
+        mutate(&settings)
+        settings.address = normalizedOSCAddress(settings.address)
+        oscMessageNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateOSCBundleNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout OSCBundleNodeSettings) -> Void) {
+        var settings = settings(forOSCBundleNodeID: nodeID)
+        let previousPacketCount = settings.packetCount
+        mutate(&settings)
+        settings = normalizedOSCBundleSettings(settings)
+        oscBundleNodeSettings[nodeID] = settings
+        if settings.packetCount != previousPacketCount {
+            document = syncOSCBundleNodePorts(in: document)
+        }
+        objectWillChange.send()
+    }
+
     func updateNoteNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout NoteNodeSettings) -> Void) {
         var settings = settings(forNoteNodeID: nodeID)
         mutate(&settings)
@@ -12900,7 +14689,7 @@ final class GraphStore: ObservableObject {
         let previousSceneCount = max(1, settings.sceneCount)
         mutate(&settings)
         settings.sceneCount = max(1, settings.sceneCount)
-        settings.cameraDistance = max(0.1, min(100.0, settings.cameraDistance))
+        settings.cameraDistance = max(-200.0, min(200.0, settings.cameraDistance))
         settings.backgroundAlpha = min(max(settings.backgroundAlpha, 0.0), 1.0)
         settings.defaultLightIntensity = max(0.0, min(5000.0, settings.defaultLightIntensity))
         scene3DRenderNodeSettings[nodeID] = settings
@@ -13271,6 +15060,72 @@ final class GraphStore: ObservableObject {
         objectWillChange.send()
     }
 
+    func settings(forScene3DGaussianSplatNodeID nodeID: GraphNode.ID) -> Scene3DGaussianSplatNodeSettings {
+        scene3DGaussianSplatNodeSettings[nodeID] ?? Scene3DGaussianSplatNodeSettings()
+    }
+
+    func resolvedScene3DGaussianSplatSettings(forNodeID nodeID: GraphNode.ID) -> Scene3DGaussianSplatNodeSettings {
+        var settings = settings(forScene3DGaussianSplatNodeID: nodeID)
+        guard let node = node(withID: nodeID) else {
+            return settings
+        }
+
+        settings.positionX = node.inputPorts.first(where: { $0.name == "X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.positionX
+        settings.positionY = node.inputPorts.first(where: { $0.name == "Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.positionY
+        settings.positionZ = node.inputPorts.first(where: { $0.name == "Z" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.positionZ
+        settings.scale = node.inputPorts.first(where: { $0.name == "Scale" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.scale
+        settings.rotationX = node.inputPorts.first(where: { $0.name == "Rotation X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.rotationX
+        settings.rotationY = node.inputPorts.first(where: { $0.name == "Rotation Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.rotationY
+        settings.rotationZ = node.inputPorts.first(where: { $0.name == "Rotation Z" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.rotationZ
+        settings.cameraDistance = node.inputPorts.first(where: { $0.name == "Camera Distance" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraDistance
+        settings.cameraOrbit = node.inputPorts.first(where: { $0.name == "Orbit" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraOrbit
+        settings.cameraPitch = node.inputPorts.first(where: { $0.name == "Pitch" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraPitch
+        settings.cameraPanX = node.inputPorts.first(where: { $0.name == "Pan X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraPanX
+        settings.cameraPanY = node.inputPorts.first(where: { $0.name == "Pan Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraPanY
+        settings.pointSize = node.inputPorts.first(where: { $0.name == "Point Size" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.pointSize
+        settings.opacity = node.inputPorts.first(where: { $0.name == "Opacity" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.opacity
+        settings.explode = node.inputPorts.first(where: { $0.name == "Explode" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.explode
+        settings.chaos = node.inputPorts.first(where: { $0.name == "Chaos" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.chaos
+        settings.particleSpeed = node.inputPorts.first(where: { $0.name == "Particle Speed" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.particleSpeed
+        settings.particleGravity = node.inputPorts.first(where: { $0.name == "Particle Gravity" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.particleGravity
+        settings.particleTurbulence = node.inputPorts.first(where: { $0.name == "Particle Turbulence" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.particleTurbulence
+        settings.particleBoundary = node.inputPorts.first(where: { $0.name == "Particle Boundary" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.particleBoundary
+        settings.panoramaRadius = node.inputPorts.first(where: { $0.name == "Pano Radius" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.panoramaRadius
+        settings.panoramaDepthScale = node.inputPorts.first(where: { $0.name == "Pano Depth" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.panoramaDepthScale
+        return settings
+    }
+
+    func updateScene3DGaussianSplatNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout Scene3DGaussianSplatNodeSettings) -> Void) {
+        ensureScene3DGaussianSplatPorts(for: nodeID)
+        var settings = settings(forScene3DGaussianSplatNodeID: nodeID)
+        mutate(&settings)
+        settings.positionX = min(max(settings.positionX, -50.0), 50.0)
+        settings.positionY = min(max(settings.positionY, -50.0), 50.0)
+        settings.positionZ = min(max(settings.positionZ, -50.0), 50.0)
+        settings.scale = max(0.001, min(100.0, settings.scale))
+        settings.cameraDistance = max(-200.0, min(200.0, settings.cameraDistance))
+        settings.cameraPitch = min(max(settings.cameraPitch, -89.0), 89.0)
+        settings.cameraPanX = min(max(settings.cameraPanX, -50.0), 50.0)
+        settings.cameraPanY = min(max(settings.cameraPanY, -50.0), 50.0)
+        settings.pointSize = max(0.1, min(24.0, settings.pointSize))
+        settings.opacity = min(max(settings.opacity, 0.0), 1.0)
+        settings.explode = max(0.0, min(100.0, settings.explode))
+        settings.chaos = max(0.0, min(1.0, settings.chaos))
+        settings.particleSpeed = max(0.0, min(10.0, settings.particleSpeed))
+        settings.particleGravity = max(-10.0, min(10.0, settings.particleGravity))
+        settings.particleTurbulence = max(0.0, min(10.0, settings.particleTurbulence))
+        settings.particleBoundary = max(0.1, min(500.0, settings.particleBoundary))
+        settings.maxSplats = max(1_000.0, min(2_000_000.0, settings.maxSplats))
+        settings.panoramaRadius = max(0.01, min(50.0, settings.panoramaRadius))
+        settings.panoramaDepthScale = max(0.0, min(10.0, settings.panoramaDepthScale))
+        settings.backgroundAlpha = min(max(settings.backgroundAlpha, 0.0), 1.0)
+        if settings.filename.isEmpty {
+            settings.filename = "Gaussian Splat"
+        }
+        scene3DGaussianSplatNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
     func settings(forScene3DParticleNodeID nodeID: GraphNode.ID) -> Scene3DParticleNodeSettings {
         scene3DParticleNodeSettings[nodeID] ?? Scene3DParticleNodeSettings()
     }
@@ -13293,6 +15148,9 @@ final class GraphStore: ObservableObject {
         settings.lifetime = node.inputPorts.first(where: { $0.name == "Lifetime" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.lifetime
         settings.speed = node.inputPorts.first(where: { $0.name == "Speed" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.speed
         settings.spread = node.inputPorts.first(where: { $0.name == "Spread" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.spread
+        settings.boxWidth = node.inputPorts.first(where: { $0.name == "Box Width" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.boxWidth
+        settings.boxHeight = node.inputPorts.first(where: { $0.name == "Box Height" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.boxHeight
+        settings.boxDepth = node.inputPorts.first(where: { $0.name == "Box Depth" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.boxDepth
         settings.size = node.inputPorts.first(where: { $0.name == "Size" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.size
         settings.gravityY = node.inputPorts.first(where: { $0.name == "Gravity Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.gravityY
         if let tint = node.inputPorts.first(where: { $0.name == "Color" }).flatMap({ resolvedColorValue(forInputPortID: $0.id) }) {
@@ -13316,7 +15174,16 @@ final class GraphStore: ObservableObject {
         settings.lifetime = max(0.05, min(20.0, settings.lifetime))
         settings.speed = max(0.0, min(20.0, settings.speed))
         settings.spread = max(0.0, min(180.0, settings.spread))
-        settings.size = max(0.001, min(1.0, settings.size))
+        settings.boxWidth = max(0.01, min(500.0, settings.boxWidth))
+        settings.boxHeight = max(0.01, min(500.0, settings.boxHeight))
+        settings.boxDepth = max(0.01, min(500.0, settings.boxDepth))
+        settings.size = max(0.001, min(20.0, settings.size))
+        settings.spriteSheetColumns = max(1.0, min(32.0, settings.spriteSheetColumns.rounded()))
+        settings.spriteSheetRows = max(1.0, min(32.0, settings.spriteSheetRows.rounded()))
+        let maxSpriteCount = settings.spriteSheetColumns * settings.spriteSheetRows
+        settings.spriteSheetCount = max(1.0, min(maxSpriteCount, settings.spriteSheetCount.rounded()))
+        settings.spriteWobble = max(0.0, min(1.0, settings.spriteWobble))
+        settings.spriteWobbleSpeed = max(0.0, min(10.0, settings.spriteWobbleSpeed))
         settings.gravityY = min(max(settings.gravityY, -20.0), 20.0)
         settings.red = min(max(settings.red, 0.0), 1.0)
         settings.green = min(max(settings.green, 0.0), 1.0)
@@ -13460,6 +15327,7 @@ final class GraphStore: ObservableObject {
         }
         settings.rate = max(0.0, min(4.0, settings.rate))
         settings.seekPosition = max(0.0, min(1.0, settings.seekPosition))
+        settings.volume = max(0.0, min(1.0, settings.volume))
         videoPlayerNodeSettings[nodeID] = settings
         videoPlayerControllers[nodeID]?.reloadFromStore()
         objectWillChange.send()
@@ -13597,6 +15465,7 @@ final class GraphStore: ObservableObject {
         pruneScaleNodeSettings()
         pruneInterpolatorNodeSettings()
         pruneHoldNodeSettings()
+        pruneScalarSmoothNodeSettings()
         pruneHitZoneNodeSettings()
         pruneRectHitNodeSettings()
         pruneGridLayoutNodeSettings()
@@ -13641,6 +15510,8 @@ final class GraphStore: ObservableObject {
         pruneTextImageNodeSettings()
         pruneMIDIOutNodeSettings()
         pruneMIDICCNodeSettings()
+        pruneMIDIInputNodeSettings()
+        pruneOSCNodeSettings()
         pruneNoteNodeSettings()
         pruneTransformNodeSettings()
         pruneScene3DTransformNodeSettings()
@@ -13654,6 +15525,7 @@ final class GraphStore: ObservableObject {
         pruneAIImageNodeSettings()
         pruneVideoPlayerNodeSettings()
         pruneLayerNodeSettings()
+        pruneOSCNodeSettings()
         pruneFeedbackNodeSettings()
         pruneCoreImageNodeSettings()
         pruneUnderwaterNodeSettings()
@@ -13674,6 +15546,7 @@ final class GraphStore: ObservableObject {
         statusMessage = "Graph rebuilt from current source."
         validateMetalSource()
         updateMIDINodes()
+        updateOSCNodes()
     }
 
     func rebuildCurrentGraph() {
@@ -13706,6 +15579,7 @@ final class GraphStore: ObservableObject {
         pruneScaleNodeSettings()
         pruneInterpolatorNodeSettings()
         pruneHoldNodeSettings()
+        pruneScalarSmoothNodeSettings()
         pruneHitZoneNodeSettings()
         pruneRectHitNodeSettings()
         pruneGridLayoutNodeSettings()
@@ -13750,6 +15624,8 @@ final class GraphStore: ObservableObject {
         pruneTextImageNodeSettings()
         pruneMIDIOutNodeSettings()
         pruneMIDICCNodeSettings()
+        pruneMIDIInputNodeSettings()
+        pruneOSCNodeSettings()
         pruneNoteNodeSettings()
         pruneTransformNodeSettings()
         pruneScene3DTransformNodeSettings()
@@ -13763,6 +15639,7 @@ final class GraphStore: ObservableObject {
         pruneAIImageNodeSettings()
         pruneVideoPlayerNodeSettings()
         pruneLayerNodeSettings()
+        pruneOSCNodeSettings()
         pruneFeedbackNodeSettings()
         pruneCoreImageNodeSettings()
         pruneUnderwaterNodeSettings()
@@ -13875,10 +15752,57 @@ final class GraphStore: ObservableObject {
             let source = try readSecurityScopedFile(at: url)
             try restoreGraphSnapshot(from: source)
             rememberCurrentGraphFile(url)
+            restartOSCInputRouting()
             statusMessage = "Loaded graph snapshot \(url.lastPathComponent)."
         } catch {
             statusMessage = "Graph open failed: \(error.localizedDescription)"
         }
+    }
+
+    func runGraph() {
+        resumeGraphClock()
+        graphExecutionState = .running
+        updateAudioMonitorState()
+        updateVideoMonitorState()
+        updateMIDINodes()
+        updateOSCNodes()
+        if isPreviewVisible == false {
+            let renderNodes = renderOutputNodes()
+            for renderNode in renderNodes {
+                openPreviewWindow(for: renderNode.id)
+            }
+        }
+        statusMessage = "Graph running."
+    }
+
+    func pauseGraph() {
+        pauseGraphClock()
+        graphExecutionState = .paused
+        updateAudioMonitorState()
+        updateVideoMonitorState()
+        updateMIDINodes()
+        updateOSCNodes()
+        closeAllPreviewWindows()
+        statusMessage = "Graph paused."
+    }
+
+    func restartGraphExecution() {
+        let shouldReopenRender = !renderOutputNodes().isEmpty
+        pauseGraph()
+        resumeGraphClock()
+        graphExecutionState = .running
+        updateAudioMonitorState()
+        updateVideoMonitorState()
+        updateMIDINodes()
+        restartOSCInputRouting()
+        updateOSCNodes()
+        if shouldReopenRender {
+            let renderNodes = renderOutputNodes()
+            for renderNode in renderNodes {
+                openPreviewWindow(for: renderNode.id)
+            }
+        }
+        statusMessage = "Graph restarted."
     }
 
     func togglePreviewWindow() {
@@ -13906,6 +15830,122 @@ final class GraphStore: ObservableObject {
             preferredLevelMode: preferredPreviewWindowLevelMode(for: renderNodeID),
             preferredFullScreen: preferredPreviewWindowFullScreen(for: renderNodeID)
         )
+    }
+
+    func previewVideoRecorder(forRenderNodeID renderNodeID: GraphNode.ID) -> PreviewVideoRecorder? {
+        activePreviewVideoExportRenderNodeID == renderNodeID ? activePreviewVideoRecorder : nil
+    }
+
+    func exportPreviewMovie() {
+        guard activePreviewVideoRecorder == nil else {
+            statusMessage = "Movie export already running."
+            return
+        }
+
+        let targetRenderNodeID = selectedNode.flatMap { node -> GraphNode.ID? in
+            if case .renderOutput = node.kind { return node.id }
+            return nil
+        } ?? renderOutputNodes().first?.id
+
+        guard let targetRenderNodeID else {
+            statusMessage = "Add a Render Output node before exporting a movie."
+            return
+        }
+
+        let durationField = NSTextField(string: "10")
+        durationField.placeholderString = "Seconds"
+        let fpsField = NSTextField(string: "60")
+        fpsField.placeholderString = "FPS"
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+        stack.addArrangedSubview(exportPanelRow(label: "Duration", field: durationField))
+        stack.addArrangedSubview(exportPanelRow(label: "FPS", field: fpsField))
+        stack.frame = NSRect(x: 0, y: 0, width: 260, height: 72)
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isPresentingOpenPanel == false else { return }
+            self.isPresentingOpenPanel = true
+            let shouldResumeGraph = self.isGraphRunning
+            if shouldResumeGraph {
+                self.suspendGraphExecutionForModalPanel()
+            }
+            self.statusMessage = "Choose a movie export location..."
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let self else { return }
+                let panel = NSSavePanel()
+                panel.allowedContentTypes = [.quickTimeMovie]
+                panel.nameFieldStringValue = "\(self.currentGraphDisplayName)-export.mov"
+                panel.accessoryView = stack
+
+                let finish: (NSApplication.ModalResponse, URL?) -> Void = { [weak self] response, url in
+                    guard let self else { return }
+                    self.isPresentingOpenPanel = false
+                    if shouldResumeGraph {
+                        self.resumeGraphExecutionAfterModalPanel()
+                    }
+                    guard response == .OK, let url else {
+                        self.statusMessage = "Movie export cancelled."
+                        return
+                    }
+
+                    let duration = max(0.1, min(3600.0, durationField.doubleValue))
+                    let fps = Int32(max(1, min(120, fpsField.integerValue)))
+                    self.startPreviewMovieExport(to: url, renderNodeID: targetRenderNodeID, duration: duration, fps: fps)
+                }
+
+                if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                    panel.beginSheetModal(for: window) { response in
+                        finish(response, panel.url)
+                    }
+                } else {
+                    finish(panel.runModal(), panel.url)
+                }
+            }
+        }
+    }
+
+    private func exportPanelRow(label: String, field: NSTextField) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 8
+
+        let labelView = NSTextField(labelWithString: label)
+        labelView.frame = NSRect(x: 0, y: 0, width: 80, height: 22)
+        field.frame = NSRect(x: 0, y: 0, width: 120, height: 22)
+
+        row.addArrangedSubview(labelView)
+        row.addArrangedSubview(field)
+        return row
+    }
+
+    private func startPreviewMovieExport(to url: URL, renderNodeID: GraphNode.ID, duration: Double, fps: Int32) {
+        openPreviewWindow(for: renderNodeID)
+        runGraph()
+        activePreviewVideoExportRenderNodeID = renderNodeID
+        let recorder = PreviewVideoRecorder(
+            outputURL: url,
+            duration: duration,
+            fps: fps,
+            progress: { [weak self] message in
+                self?.statusMessage = message
+            }
+        ) { [weak self] result in
+            guard let self else { return }
+            self.activePreviewVideoRecorder = nil
+            self.activePreviewVideoExportRenderNodeID = nil
+            switch result {
+            case .success(let url):
+                self.statusMessage = "Exported movie to \(url.lastPathComponent)."
+            case .failure(let error):
+                self.statusMessage = "Movie export failed: \(error.localizedDescription)"
+            }
+        }
+        activePreviewVideoRecorder = recorder
+        statusMessage = "Recording \(Int(duration))s movie at \(fps) FPS..."
     }
 
     func hideAuxiliaryWindows() {
@@ -13960,18 +16000,20 @@ final class GraphStore: ObservableObject {
 
     fileprivate func videoPlayerControlState(for nodeID: GraphNode.ID) -> VideoPlayerControlState {
         guard let node = node(withID: nodeID), case .videoPlayer = node.kind else {
-            return VideoPlayerControlState(play: 1.0, rate: 1.0, seek: nil)
+            return VideoPlayerControlState(play: 1.0, rate: 1.0, seek: nil, volume: 1.0)
         }
 
         let settings = settings(forVideoPlayerNodeID: nodeID)
         let play = node.inputPorts.first(where: { $0.name == "Play" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? (settings.isPlaying ? 1.0 : 0.0)
         let rate = node.inputPorts.first(where: { $0.name == "Rate" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.rate
         let seek = node.inputPorts.first(where: { $0.name == "Seek" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.seekPosition
+        let volume = node.inputPorts.first(where: { $0.name == "Volume" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.volume
 
         return VideoPlayerControlState(
             play: play,
             rate: max(0.0, min(4.0, rate)),
-            seek: max(0.0, min(1.0, seek))
+            seek: max(0.0, min(1.0, seek)),
+            volume: max(0.0, min(1.0, volume))
         )
     }
 
@@ -14456,6 +16498,8 @@ final class GraphStore: ObservableObject {
             inspectorFocusTarget = .nodeLibrary
         case .scene3DModel:
             inspectorFocusTarget = .nodeLibrary
+        case .scene3DGaussianSplat:
+            inspectorFocusTarget = .nodeLibrary
         case .scene3DParticle:
             inspectorFocusTarget = .nodeLibrary
         case .select:
@@ -14504,6 +16548,28 @@ final class GraphStore: ObservableObject {
             inspectorFocusTarget = .nodeLibrary
         case .midiCC:
             inspectorFocusTarget = .nodeLibrary
+        case .midiCCInput:
+            inspectorFocusTarget = .nodeLibrary
+        case .midiNoteInput:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscInput:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscOutput:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscReceive:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscSend:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscGet4:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscGetArray:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscMake4:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscMakeArray:
+            inspectorFocusTarget = .nodeLibrary
+        case .oscBundle:
+            inspectorFocusTarget = .nodeLibrary
         case .clear:
             inspectorFocusTarget = .nodeLibrary
         case .image:
@@ -14539,6 +16605,8 @@ final class GraphStore: ObservableObject {
         case .interpolator:
             inspectorFocusTarget = .nodeLibrary
         case .hold:
+            inspectorFocusTarget = .nodeLibrary
+        case .scalarSmooth:
             inspectorFocusTarget = .nodeLibrary
         case .hitZone:
             inspectorFocusTarget = .nodeLibrary
@@ -14605,8 +16673,10 @@ final class GraphStore: ObservableObject {
         videoMonitor.$handSnapshot
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.updateMIDINodes()
-                self?.objectWillChange.send()
+                guard let self, self.isGraphRunning else { return }
+                self.updateMIDINodes()
+                self.updateOSCNodes()
+                self.objectWillChange.send()
             }
             .store(in: &cancellables)
 
@@ -14614,7 +16684,9 @@ final class GraphStore: ObservableObject {
             .autoconnect()
             .sink { [weak self] _ in
                 guard let self else { return }
+                guard self.isGraphRunning else { return }
                 self.updateMIDINodes()
+                self.updateOSCNodes()
                 self.objectWillChange.send()
             }
             .store(in: &cancellables)
@@ -14625,6 +16697,7 @@ final class GraphStore: ObservableObject {
                 self?.updateAudioMonitorState()
                 self?.updateVideoMonitorState()
                 self?.updateMIDINodes()
+                self?.updateOSCNodes()
                 self?.synchronizeWebViewControllers()
                 self?.synchronizeVideoPlayerControllers()
             }
@@ -14650,6 +16723,7 @@ final class GraphStore: ObservableObject {
             $point3ScaleNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $point4ScaleNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $holdNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $scalarSmoothNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $handTrackerNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $pinchNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $scrollGestureNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
@@ -14694,6 +16768,10 @@ final class GraphStore: ObservableObject {
             $iteratorNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $midiOutNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $midiCCNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $oscInputNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $oscOutputNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $oscSendNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $oscMessageNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $noteNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $transformNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $billboardNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
@@ -14772,6 +16850,10 @@ final class GraphStore: ObservableObject {
     }
 
     private func updateAudioMonitorState() {
+        guard isGraphRunning else {
+            audioMonitor.setMonitoringEnabled(false)
+            return
+        }
         let hasAudioNode = document.nodes.contains { node in
             if case .audio = node.kind { return true }
             if case .beatDetect = node.kind { return true }
@@ -14781,6 +16863,11 @@ final class GraphStore: ObservableObject {
     }
 
     private func updateVideoMonitorState() {
+        guard isGraphRunning else {
+            videoMonitor.setVideoRequested(false, for: monitorClientID)
+            videoMonitor.setHandTrackingEnabled(false, for: monitorClientID)
+            return
+        }
         let hasVideoNode = document.nodes.contains { node in
             if case .video = node.kind { return true }
             return false
@@ -14795,6 +16882,12 @@ final class GraphStore: ObservableObject {
     }
 
     private func updateMIDINodes() {
+        guard isGraphRunning else {
+            stopAllMIDINodes()
+            midiCCNodeRuntimeStates.removeAll()
+            return
+        }
+
         let liveMIDINodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
             if case .midiOut = node.kind { return node.id }
             return nil
@@ -14891,6 +16984,151 @@ final class GraphStore: ObservableObject {
         }
     }
 
+    private func updateOSCNodes() {
+        guard isGraphRunning else {
+            oscInputRouter.syncListening(on: [])
+            oscInputNodeRuntimeStates.removeAll()
+            oscOutputNodeRuntimeStates.removeAll()
+            return
+        }
+
+        oscInputRouter.syncListening(on: activeOSCInputPorts())
+
+        let liveInputNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            switch node.kind {
+            case .oscInput, .oscReceive:
+                return node.id
+            default:
+                return nil
+            }
+        })
+        let liveOutputNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            switch node.kind {
+            case .oscOutput, .oscSend:
+                return node.id
+            default:
+                return nil
+            }
+        })
+
+        for nodeID in oscInputNodeRuntimeStates.keys where !liveInputNodeIDs.contains(nodeID) {
+            oscInputNodeRuntimeStates.removeValue(forKey: nodeID)
+        }
+        for nodeID in oscOutputNodeRuntimeStates.keys where !liveOutputNodeIDs.contains(nodeID) {
+            oscOutputNodeRuntimeStates.removeValue(forKey: nodeID)
+        }
+
+        for node in document.nodes {
+            switch node.kind {
+            case .oscInput, .oscReceive:
+                let settings = settings(forOSCInputNodeID: node.id)
+                oscInputRouter.ensureListening(on: settings.port)
+            case .oscOutput:
+                let settings = settings(forOSCOutputNodeID: node.id)
+                let values = oscOutputValues(for: node)
+                guard values.isEmpty == false else { continue }
+
+                let signature = "\(settings.host):\(settings.port):\(settings.address):" + values.map(\.signatureComponent).joined(separator: "|")
+                let runtime = oscOutputNodeRuntimeStates[node.id] ?? OSCOutputNodeRuntimeState()
+                if runtime.lastSignature != signature {
+                    _ = oscOutputRouter.send(
+                        host: settings.host,
+                        port: settings.port,
+                        address: settings.address,
+                        values: values
+                    )
+                    oscOutputNodeRuntimeStates[node.id] = OSCOutputNodeRuntimeState(lastSignature: signature)
+                }
+            case .oscSend:
+                let settings = settings(forOSCSendNodeID: node.id)
+                guard
+                    let packetInput = node.inputPorts.first(where: { $0.name == "Packet" }),
+                    let packet = resolvedOSCPacketValue(forInputPortID: packetInput.id)
+                else {
+                    continue
+                }
+
+                let signature = "\(settings.host):\(settings.port):\(packet.signatureComponent)"
+                let runtime = oscOutputNodeRuntimeStates[node.id] ?? OSCOutputNodeRuntimeState()
+                if runtime.lastSignature != signature {
+                    _ = oscOutputRouter.send(host: settings.host, port: settings.port, packet: packet)
+                    oscOutputNodeRuntimeStates[node.id] = OSCOutputNodeRuntimeState(lastSignature: signature)
+                }
+            default:
+                continue
+            }
+        }
+    }
+
+    private func activeOSCInputPorts() -> Set<Int> {
+        Set(document.nodes.compactMap { node -> Int? in
+            switch node.kind {
+            case .oscInput, .oscReceive:
+                return settings(forOSCInputNodeID: node.id).port
+            default:
+                return nil
+            }
+        }.map { max(1, min(65535, $0)) })
+    }
+
+    private func restartOSCInputRouting() {
+        oscInputRouter.restartListening(on: activeOSCInputPorts())
+    }
+
+    private func stopAllMIDINodes() {
+        for nodeID in midiNodeRuntimeStates.keys {
+            stopMIDINode(nodeID)
+        }
+    }
+
+    private func oscOutputValues(for node: GraphNode, prefix: String = "") -> [OSCValue] {
+        let slotNames: [(float: String, int: String, text: String)] = {
+            switch node.kind {
+            case .oscOutput where prefix.isEmpty:
+                return [
+                    ("Float", "Int", "Text"),
+                    ("Float 2", "Int 2", "Text 2"),
+                    ("Float 3", "Int 3", "Text 3"),
+                    ("Float 4", "Int 4", "Text 4")
+                ]
+            default:
+                return [
+                    ("\(prefix)Float 1", "\(prefix)Int 1", "\(prefix)Text 1"),
+                    ("\(prefix)Float 2", "\(prefix)Int 2", "\(prefix)Text 2"),
+                    ("\(prefix)Float 3", "\(prefix)Int 3", "\(prefix)Text 3"),
+                    ("\(prefix)Float 4", "\(prefix)Int 4", "\(prefix)Text 4")
+                ]
+            }
+        }()
+
+        func connectedPort(named name: String) -> GraphPort? {
+            guard let port = node.inputPorts.first(where: { $0.name == name }) else { return nil }
+            guard effectiveIncomingConnection(for: port.id) != nil else { return nil }
+            return port
+        }
+
+        return slotNames.compactMap { names in
+            if let floatPort = connectedPort(named: names.float),
+               let value = resolvedScalarValue(forInputPortID: floatPort.id) {
+                return .float(Float(value))
+            }
+
+            if let intPort = connectedPort(named: names.int),
+               let value = resolvedScalarValue(forInputPortID: intPort.id) {
+                let clamped = max(Double(Int32.min), min(Double(Int32.max), value.rounded()))
+                return .int(Int32(clamped))
+            }
+
+            if let textPort = connectedPort(named: names.text),
+               let value = resolvedStringValue(forInputPortID: textPort.id),
+               value.isEmpty == false {
+                return .string(value)
+            }
+
+            return nil
+        }
+    }
+
     private func stopMIDINode(_ nodeID: GraphNode.ID) {
         guard let runtime = midiNodeRuntimeStates[nodeID] else { return }
         if let active = runtime.activeNote {
@@ -14911,6 +17149,12 @@ final class GraphStore: ObservableObject {
             return settings.destinationName
         }
         return midiRouter.preferredDestinationName() ?? ""
+    }
+
+    private func normalizedOSCAddress(_ address: String) -> String {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return "" }
+        return trimmed.hasPrefix("/") ? trimmed : "/\(trimmed)"
     }
 
     private func midiNote(for point: CGPoint, settings: MIDIOutNodeSettings) -> UInt8? {
@@ -14984,6 +17228,7 @@ final class GraphStore: ObservableObject {
             scaleNodeSettings: scaleNodeSettings,
             interpolatorNodeSettings: interpolatorNodeSettings,
             holdNodeSettings: holdNodeSettings,
+            scalarSmoothNodeSettings: scalarSmoothNodeSettings,
             handTrackerNodeSettings: handTrackerNodeSettings,
             pinchNodeSettings: pinchNodeSettings,
             scrollGestureNodeSettings: scrollGestureNodeSettings,
@@ -15041,6 +17286,13 @@ final class GraphStore: ObservableObject {
             iteratorNodeSettings: iteratorNodeSettings,
             midiOutNodeSettings: midiOutNodeSettings,
             midiCCNodeSettings: midiCCNodeSettings,
+            midiInputCCNodeSettings: midiInputCCNodeSettings,
+            midiInputNoteNodeSettings: midiInputNoteNodeSettings,
+            oscInputNodeSettings: oscInputNodeSettings,
+            oscOutputNodeSettings: oscOutputNodeSettings,
+            oscSendNodeSettings: oscSendNodeSettings,
+            oscMessageNodeSettings: oscMessageNodeSettings,
+            oscBundleNodeSettings: oscBundleNodeSettings,
             noteNodeSettings: noteNodeSettings,
             transformNodeSettings: transformNodeSettings,
             billboardNodeSettings: billboardNodeSettings,
@@ -15052,6 +17304,7 @@ final class GraphStore: ObservableObject {
             scene3DPrimitiveNodeSettings: scene3DPrimitiveNodeSettings,
             scene3DTextNodeSettings: scene3DTextNodeSettings,
             scene3DModelNodeSettings: scene3DModelNodeSettings,
+            scene3DGaussianSplatNodeSettings: scene3DGaussianSplatNodeSettings,
             scene3DParticleNodeSettings: scene3DParticleNodeSettings,
             transitionNodeSettings: transitionNodeSettings,
             trailNodeSettings: trailNodeSettings,
@@ -15224,7 +17477,7 @@ final class GraphStore: ObservableObject {
             switch inputPort.kind {
             case .time, .uniform:
                 return inputPort.nodeID != renderNode?.id && !validInputPortIDs.contains(connection.toPortID)
-            case .audio, .scalarSignal, .pointSignal, .point3Signal, .point4Signal, .stringSignal, .colorSignal, .scalarArraySignal, .stringArraySignal, .colorArraySignal, .imageArraySignal, .sliderStyle, .buttonStyle, .fragmentShader, .lightSignal, .materialSignal, .scene3DSignal:
+            case .audio, .scalarSignal, .pointSignal, .point3Signal, .point4Signal, .stringSignal, .colorSignal, .scalarArraySignal, .stringArraySignal, .colorArraySignal, .imageArraySignal, .sliderStyle, .buttonStyle, .fragmentShader, .lightSignal, .materialSignal, .scene3DSignal, .oscPacketSignal:
                 return false
             }
         }
@@ -15422,17 +17675,6 @@ final class GraphStore: ObservableObject {
             }
             return uniformID
         }
-        let fragmentImageUniformIDs = fragmentNode.inputPorts.compactMap { inputPort -> UniformDescriptor.ID? in
-            guard
-                case .fragmentShader = inputPort.kind,
-                let uniform = currentUniform(named: inputPort.name),
-                uniform.kind == .image
-            else {
-                return nil
-            }
-            return uniform.id
-        }
-
         for inputPort in fragmentNode.inputPorts {
             guard
                 case .uniform(let targetUniformID) = inputPort.kind,
@@ -15514,7 +17756,12 @@ final class GraphStore: ObservableObject {
             }
         }
 
-        return (fragmentUniformIDs + fragmentImageUniformIDs).compactMap { resolvedByID[$0] }
+        let orderedRegularUniforms = fragmentUniformIDs.compactMap { resolvedByID[$0] }
+        let orderedImageUniforms = fragmentNode.inputPorts.compactMap { inputPort -> UniformDescriptor? in
+            guard case .fragmentShader = inputPort.kind else { return nil }
+            return imageUniformDescriptor(for: inputPort)
+        }
+        return orderedRegularUniforms + orderedImageUniforms
     }
 
     private func imageUniformSources(
@@ -15526,19 +17773,31 @@ final class GraphStore: ObservableObject {
             return []
         }
 
-        return fragmentNode.inputPorts.compactMap { inputPort -> PreviewPassSource?? in
+        let imageUniformNames = effectiveUniforms(forFragmentNodeID: fragmentNodeID)
+            .filter { $0.kind == .image }
+            .map(\.name)
+
+        return imageUniformNames.map { uniformName -> PreviewPassSource? in
             guard
-                case .fragmentShader = inputPort.kind,
-                let uniform = currentUniform(named: inputPort.name),
-                uniform.kind == .image
+                let inputPort = fragmentNode.inputPorts.first(where: { port in
+                    guard case .fragmentShader = port.kind else { return false }
+                    return port.name == uniformName
+                })
             else {
                 return nil
             }
-            return .some(previewPassSourceForVisualInputPortID(
+            if inputPort.name.lowercased() == "feedback",
+               let connection = effectiveIncomingConnection(for: inputPort.id),
+               let sourcePort = resolvedSourcePort(for: connection.fromPortID),
+               let sourceNode = document.nodes.first(where: { $0.id == sourcePort.nodeID }),
+               case .feedback = sourceNode.kind {
+                return .feedbackHistory(nodeID: sourceNode.id)
+            }
+            return previewPassSourceForVisualInputPortID(
                 inputPort.id,
                 visitedNodeIDs: visitedNodeIDs,
                 activeFeedbackNodeID: activeFeedbackNodeID
-            ))
+            )
         }
     }
 
@@ -15673,6 +17932,11 @@ final class GraphStore: ObservableObject {
 
         if case .scene3DSignal = outputPort.kind,
            case .scene3DSignal = inputPort.kind {
+            return true
+        }
+
+        if case .oscPacketSignal = outputPort.kind,
+           case .oscPacketSignal = inputPort.kind {
             return true
         }
 
@@ -15904,7 +18168,7 @@ final class GraphStore: ObservableObject {
 
     private func interpolatorProgress(duration: Double, phase: Double, autoreverses: Bool, easing: InterpolatorEasing) -> Double {
         let clampedDuration = max(duration, 0.0001)
-        let elapsed = max(0.0, Date().timeIntervalSinceReferenceDate + phase)
+        let elapsed = max(0.0, graphClockTime + phase)
         let normalizedTime = elapsed / clampedDuration
         let cyclePosition: Double
         if autoreverses {
@@ -19345,6 +21609,14 @@ final class GraphStore: ObservableObject {
         return dot(c, float3(0.299, 0.587, 0.114));
     }
 
+    float visibleAlpha(float4 c) {
+        return max(c.a, smoothstep(0.002, 0.04, luminance(c.rgb)));
+    }
+
+    bool isFallbackMagenta(float3 c) {
+        return c.r > 0.85 && c.g < 0.2 && c.b > 0.85;
+    }
+
     fragment float4 generatedFragment(RasterizerData in [[stage_in]],
                                       constant PreviewUniforms& uniforms [[buffer(0)]],
                                       constant float* floatUniforms [[buffer(1)]],
@@ -19788,6 +22060,14 @@ final class GraphStore: ObservableObject {
         return dot(c, float3(0.299, 0.587, 0.114));
     }
 
+    float visibleAlpha(float4 c) {
+        return max(c.a, smoothstep(0.002, 0.04, luminance(c.rgb)));
+    }
+
+    bool isFallbackMagenta(float3 c) {
+        return c.r > 0.85 && c.g < 0.2 && c.b > 0.85;
+    }
+
     float hash21(float2 p) {
         p = fract(p * float2(123.34, 456.21));
         p += dot(p, p + 45.32);
@@ -19831,6 +22111,9 @@ final class GraphStore: ObservableObject {
         float rgbAmt = mix(0.0, 0.035, clamp(RGBSplit, 0.0, 1.0));
 
         float4 current = texture.sample(textureSampler, uv);
+        if (isFallbackMagenta(current.rgb)) {
+            current = float4(0.0);
+        }
 
         float bandIndex = floor(uv.y * mix(20.0, 160.0, clamp(Drift, 0.0, 1.0)));
         float bandNoise = noise2d(float2(bandIndex, floor(t * 7.0)));
@@ -19864,9 +22147,15 @@ final class GraphStore: ObservableObject {
         } else {
             prev = feedback.sample(feedbackSampler, feedbackUV).rgb;
         }
+        if (isFallbackMagenta(prev)) {
+            prev = current.rgb;
+        }
 
         float2 smearUV = clamp(feedbackUV + float2(driftAmt * 0.8, 0.0), 0.0, 1.0);
         float3 smear = feedback.sample(feedbackSampler, smearUV).rgb;
+        if (isFallbackMagenta(smear)) {
+            smear = prev;
+        }
 
         float currLuma = luminance(current.rgb);
         float prevLuma = luminance(prev);
@@ -19887,7 +22176,7 @@ final class GraphStore: ObservableObject {
 
         moshed = mix(moshed, moshed * Tint.rgb, 0.16);
 
-        return float4(moshed, current.a);
+        return float4(moshed, visibleAlpha(current));
     }
     """
 
@@ -19913,6 +22202,14 @@ final class GraphStore: ObservableObject {
 
     float luminance(float3 c) {
         return dot(c, float3(0.299, 0.587, 0.114));
+    }
+
+    float visibleAlpha(float4 c) {
+        return max(c.a, smoothstep(0.002, 0.04, luminance(c.rgb)));
+    }
+
+    bool isFallbackMagenta(float3 c) {
+        return c.r > 0.85 && c.g < 0.2 && c.b > 0.85;
     }
 
     fragment float4 generatedFragment(RasterizerData in [[stage_in]],
@@ -19951,6 +22248,15 @@ final class GraphStore: ObservableObject {
         float3 prev1 = feedback.sample(feedbackSampler, clamp(uv - off1, 0.0, 1.0)).rgb;
         float3 prev2 = feedback.sample(feedbackSampler, clamp(uv - off2, 0.0, 1.0)).rgb;
         float3 prev3 = feedback.sample(feedbackSampler, clamp(uv - off3, 0.0, 1.0)).rgb;
+        if (isFallbackMagenta(prev1)) {
+            prev1 = current.rgb;
+        }
+        if (isFallbackMagenta(prev2)) {
+            prev2 = current.rgb;
+        }
+        if (isFallbackMagenta(prev3)) {
+            prev3 = current.rgb;
+        }
 
         float3 trails;
         if (UseColorShift) {
@@ -19971,7 +22277,7 @@ final class GraphStore: ObservableObject {
         float3 feedbackBlend = mix(current.rgb, trailed, trailAmt);
         float3 color = mix(current.rgb, feedbackBlend, imageMix);
 
-        return float4(color, current.a);
+        return float4(color, visibleAlpha(current));
     }
     """
 
@@ -20028,6 +22334,10 @@ final class GraphStore: ObservableObject {
         return dot(c, float3(0.299, 0.587, 0.114));
     }
 
+    float visibleAlpha(float4 c) {
+        return max(c.a, smoothstep(0.002, 0.04, luminance(c.rgb)));
+    }
+
     fragment float4 generatedFragment(RasterizerData in [[stage_in]],
                                       constant PreviewUniforms& uniforms [[buffer(0)]],
                                       constant float* floatUniforms [[buffer(1)]],
@@ -20079,7 +22389,7 @@ final class GraphStore: ObservableObject {
         }
 
         float3 color = mix(current.rgb, melted, imageMix);
-        return float4(color, current.a);
+        return float4(color, visibleAlpha(current));
     }
     """
 
@@ -20644,7 +22954,7 @@ final class GraphStore: ObservableObject {
         case .mix:
             return fragmentNodeID(forMixNodeID: sourceNode.id, inputName: "Shader A")
                 ?? fragmentNodeID(forMixNodeID: sourceNode.id, inputName: "Shader B")
-        case .trail, .note, .textImage, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .layers, .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .scale, .interpolator, .hold, .monitor, .renderOutput:
+        case .trail, .note, .textImage, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .layers, .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .scale, .interpolator, .hold, .scalarSmooth, .monitor, .renderOutput:
             return nil
         }
     }
@@ -20869,6 +23179,48 @@ final class GraphStore: ObservableObject {
                 }
             let resolvedIndex = min(max(Int(index.rounded()), 0), max(parts.count - 1, 0))
             return parts.isEmpty ? "" : parts[resolvedIndex]
+        case .oscInput:
+            return oscInputStringValue(for: sourceNode.id, outputName: outputPort.name)
+        case .oscReceive:
+            return oscReceiveStringValue(for: sourceNode.id, outputName: outputPort.name)
+        case .oscGet4:
+            let packet = oscGetPacketValue(for: sourceNode.id)
+            switch outputPort.name {
+            case "Address":
+                return oscAddress(in: packet)
+            case "Text 1":
+                if case .string(let value) = oscArgument(in: packet, at: 0) { return value }
+                if case .float(let value) = oscArgument(in: packet, at: 0) { return String(format: "%.3f", Double(value)) }
+                if case .int(let value) = oscArgument(in: packet, at: 0) { return "\(value)" }
+                return nil
+            case "Text 2":
+                if case .string(let value) = oscArgument(in: packet, at: 1) { return value }
+                if case .float(let value) = oscArgument(in: packet, at: 1) { return String(format: "%.3f", Double(value)) }
+                if case .int(let value) = oscArgument(in: packet, at: 1) { return "\(value)" }
+                return nil
+            case "Text 3":
+                if case .string(let value) = oscArgument(in: packet, at: 2) { return value }
+                if case .float(let value) = oscArgument(in: packet, at: 2) { return String(format: "%.3f", Double(value)) }
+                if case .int(let value) = oscArgument(in: packet, at: 2) { return "\(value)" }
+                return nil
+            case "Text 4":
+                if case .string(let value) = oscArgument(in: packet, at: 3) { return value }
+                if case .float(let value) = oscArgument(in: packet, at: 3) { return String(format: "%.3f", Double(value)) }
+                if case .int(let value) = oscArgument(in: packet, at: 3) { return "\(value)" }
+                return nil
+            default:
+                return nil
+            }
+        case .oscGetArray:
+            switch outputPort.name {
+            case "Address":
+                return oscAddress(in: oscGetPacketValue(for: sourceNode.id))
+            default:
+                return nil
+            }
+        case .scene3DGaussianSplat:
+            guard outputPort.name == "Status" else { return nil }
+            return GaussianSplatLoadProgressStore.shared.status(for: sourceNode.id).message
         case .stringArrayIndex:
             let settings = settings(forStringArrayIndexNodeID: sourceNode.id)
             guard
@@ -21004,6 +23356,8 @@ final class GraphStore: ObservableObject {
             return sortedArrayItemPorts(sourceNode.inputPorts).enumerated().map { index, inputPort in
                 scalarValue(forInputPortID: inputPort.id, visitedNodeIDs: [sourceNode.id]) ?? fallbackValues[index]
             }
+        case .oscGetArray:
+            return oscNumericArguments(in: oscGetPacketValue(for: sourceNode.id)) ?? []
         case .scalarArrayVariable:
             guard let inputPort = sourceNode.inputPorts.first(where: { $0.name == "Array" }) else {
                 return nil
@@ -21171,6 +23525,16 @@ final class GraphStore: ObservableObject {
             default:
                 return nil
             }
+        case .scene3DGaussianSplat:
+            let status = GaussianSplatLoadProgressStore.shared.status(for: sourceNode.id)
+            switch outputPort.name {
+            case "Loading":
+                return status.isLoading ? 1.0 : 0.0
+            case "Progress":
+                return status.progress
+            default:
+                return nil
+            }
         case .scalarVariable:
             return settings(forScalarVariableNodeID: sourceNode.id).value
         case .mouse:
@@ -21329,6 +23693,8 @@ final class GraphStore: ObservableObject {
                 return currentScrollPosition.x
             case "Y":
                 return currentScrollPosition.y
+            case "Active":
+                return isScrollActive ? 1.0 : 0.0
             default:
                 return nil
             }
@@ -21433,9 +23799,9 @@ final class GraphStore: ObservableObject {
                     let deltaY = Double(mousePosition.y - previous.y)
                     let verticalScale = settings.invertY ? 1.0 : -1.0
                     if panDragging {
-                        // Mouse positions come through normalized to preview space, so pan
-                        // needs a stronger scene-space multiplier than orbit to feel usable.
-                        let panScale = settings.panSensitivity * max(1.0, runtime.distance) * 28.0
+                        // Keep pan in stable scene units. Scaling by camera distance made
+                        // large 3D/splat scenes jump by tens of units per drag.
+                        let panScale = settings.panSensitivity * 2.0
                         runtime.panX -= deltaX * panScale
                         runtime.panY += deltaY * panScale * verticalScale
                     } else {
@@ -21454,6 +23820,7 @@ final class GraphStore: ObservableObject {
             if abs(scrollDeltaY) > 0.0001 {
                 runtime.distance -= scrollDeltaY * settings.zoomSensitivity
                 runtime.distance = min(max(runtime.distance, settings.minDistance), settings.maxDistance)
+                runtime.lastDistanceScrollTime = CACurrentMediaTime()
                 runtime.lastScrollPosition = currentScrollPosition
             } else {
                 runtime.lastScrollPosition = currentScrollPosition
@@ -21477,6 +23844,12 @@ final class GraphStore: ObservableObject {
                 return runtime.rotationY
             case "Dragging":
                 return runtime.isDragging ? 1.0 : 0.0
+            case "Scroll Active":
+                if let lastDistanceScrollTime = runtime.lastDistanceScrollTime,
+                   CACurrentMediaTime() - lastDistanceScrollTime < 0.35 {
+                    return 1.0
+                }
+                return 0.0
             default:
                 return nil
             }
@@ -21662,6 +24035,70 @@ final class GraphStore: ObservableObject {
             return outputPort.name == "Result" ? (result ? 1.0 : 0.0) : nil
         case .beatDetect:
             return beatDetectValue(for: sourceNode.id, outputName: outputPort.name)
+        case .midiCCInput:
+            return midiInputCCValue(for: sourceNode.id, outputName: outputPort.name)
+        case .midiNoteInput:
+            return midiInputNoteValue(for: sourceNode.id, outputName: outputPort.name)
+        case .oscInput:
+            return oscInputScalarValue(for: sourceNode.id, outputName: outputPort.name)
+        case .oscReceive:
+            return oscReceiveScalarValue(for: sourceNode.id, outputName: outputPort.name)
+        case .oscGet4:
+            let packet = oscGetPacketValue(for: sourceNode.id)
+            switch outputPort.name {
+            case "Float 1":
+                switch oscArgument(in: packet, at: 0) {
+                case .float(let value): return Double(value)
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Float 2":
+                switch oscArgument(in: packet, at: 1) {
+                case .float(let value): return Double(value)
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Float 3":
+                switch oscArgument(in: packet, at: 2) {
+                case .float(let value): return Double(value)
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Float 4":
+                switch oscArgument(in: packet, at: 3) {
+                case .float(let value): return Double(value)
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Int 1":
+                switch oscArgument(in: packet, at: 0) {
+                case .float(let value): return Double(Int(value.rounded()))
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Int 2":
+                switch oscArgument(in: packet, at: 1) {
+                case .float(let value): return Double(Int(value.rounded()))
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Int 3":
+                switch oscArgument(in: packet, at: 2) {
+                case .float(let value): return Double(Int(value.rounded()))
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            case "Int 4":
+                switch oscArgument(in: packet, at: 3) {
+                case .float(let value): return Double(Int(value.rounded()))
+                case .int(let value): return Double(value)
+                default: return nil
+                }
+            default:
+                return nil
+            }
+        case .oscGetArray:
+            return nil
         case .random:
             return outputPort.name == "Value" ? resolvedRandomOutput(for: sourceNode, visitedNodeIDs: [sourceNode.id]) : nil
         case .pulse:
@@ -22014,6 +24451,8 @@ final class GraphStore: ObservableObject {
             }
             holdNodeRuntimeStates[sourceNode.id] = HoldNodeRuntimeState(heldValue: currentHeld)
             return currentHeld
+        case .scalarSmooth:
+            return scalarSmoothValue(for: sourceNode, visitedNodeIDs: [sourceNode.id])
         case .scale:
             guard let valueInput = sourceNode.inputPorts.first(where: { $0.name == "Value" }),
                   let incomingValue = scalarValue(forInputPortID: valueInput.id, visitedNodeIDs: [sourceNode.id]) else {
@@ -22036,7 +24475,7 @@ final class GraphStore: ObservableObject {
         case .interpolator:
             let settings = settings(forInterpolatorNodeID: sourceNode.id)
             let duration = max(settings.duration, 0.0001)
-            let elapsed = max(0.0, Date().timeIntervalSinceReferenceDate + settings.phase)
+            let elapsed = max(0.0, graphClockTime + settings.phase)
             let normalizedTime = elapsed / duration
             let cyclePosition: Double
             if settings.autoreverses {
@@ -22240,7 +24679,7 @@ final class GraphStore: ObservableObject {
                 return nil
             }
             return value
-        case .stringSignal, .colorSignal, .point3Signal, .point4Signal, .scalarArraySignal, .stringArraySignal, .colorArraySignal, .imageArraySignal, .lightSignal, .materialSignal, .scene3DSignal:
+        case .stringSignal, .colorSignal, .point3Signal, .point4Signal, .scalarArraySignal, .stringArraySignal, .colorArraySignal, .imageArraySignal, .lightSignal, .materialSignal, .scene3DSignal, .oscPacketSignal:
             return nil
         case .scalarSignal:
             guard let sourceNode = document.nodes.first(where: { $0.id == sourcePort.nodeID }) else {
@@ -22296,6 +24735,8 @@ final class GraphStore: ObservableObject {
                     return currentScrollPosition.x
                 case "Y":
                     return currentScrollPosition.y
+                case "Active":
+                    return isScrollActive ? 1.0 : 0.0
                 default:
                     return nil
                 }
@@ -22451,9 +24892,9 @@ final class GraphStore: ObservableObject {
                         let deltaY = Double(mousePosition.y - previous.y)
                         let verticalScale = (settings.invertY ? 1.0 : -1.0)
                         if panDragging {
-                            // Mouse positions come through normalized to preview space, so pan
-                            // needs a stronger scene-space multiplier than orbit to feel usable.
-                            let panScale = settings.panSensitivity * max(1.0, runtime.distance) * 28.0
+                            // Keep pan in stable scene units. Scaling by camera distance made
+                            // large 3D/splat scenes jump by tens of units per drag.
+                            let panScale = settings.panSensitivity * 2.0
                             runtime.panX -= deltaX * panScale
                             runtime.panY += deltaY * panScale * verticalScale
                         } else {
@@ -22472,6 +24913,7 @@ final class GraphStore: ObservableObject {
                 if abs(scrollDeltaY) > 0.0001 {
                     runtime.distance -= scrollDeltaY * settings.zoomSensitivity
                     runtime.distance = min(max(runtime.distance, settings.minDistance), settings.maxDistance)
+                    runtime.lastDistanceScrollTime = CACurrentMediaTime()
                     runtime.lastScrollPosition = currentScrollPosition
                 } else {
                     runtime.lastScrollPosition = currentScrollPosition
@@ -22495,6 +24937,12 @@ final class GraphStore: ObservableObject {
                     return runtime.rotationY
                 case "Dragging":
                     return runtime.isDragging ? 1.0 : 0.0
+                case "Scroll Active":
+                    if let lastDistanceScrollTime = runtime.lastDistanceScrollTime,
+                       CACurrentMediaTime() - lastDistanceScrollTime < 0.35 {
+                        return 1.0
+                    }
+                    return 0.0
                 default:
                     return nil
                 }
@@ -22844,6 +25292,8 @@ final class GraphStore: ObservableObject {
                 }
                 holdNodeRuntimeStates[sourceNode.id] = HoldNodeRuntimeState(heldValue: currentHeld)
                 return currentHeld
+            case .scalarSmooth:
+                return scalarSmoothValue(for: sourceNode, visitedNodeIDs: visitedNodeIDs)
             case .scalarArrayIndex:
                 let settings = settings(forScalarArrayIndexNodeID: sourceNode.id)
                 guard
@@ -22907,7 +25357,7 @@ final class GraphStore: ObservableObject {
             case .interpolator:
                 let settings = settings(forInterpolatorNodeID: sourceNode.id)
                 let duration = max(settings.duration, 0.0001)
-                let elapsed = max(0.0, Date().timeIntervalSinceReferenceDate + settings.phase)
+                let elapsed = max(0.0, graphClockTime + settings.phase)
                 let normalizedTime = elapsed / duration
                 let cyclePosition: Double
                 if settings.autoreverses {
@@ -23072,6 +25522,16 @@ final class GraphStore: ObservableObject {
             return parts.isEmpty ? "" : parts[resolvedIndex]
         case .stringArrayIndex:
             return stringValueForOutputPort(sourcePort)
+        case .oscInput:
+            return oscInputStringValue(for: sourceNode.id, outputName: sourcePort.name)
+        case .oscReceive:
+            return oscReceiveStringValue(for: sourceNode.id, outputName: sourcePort.name)
+        case .oscGet4:
+            return stringValueForOutputPort(sourcePort)
+        case .oscGetArray:
+            return stringValueForOutputPort(sourcePort)
+        case .scene3DGaussianSplat:
+            return stringValueForOutputPort(sourcePort)
         case .stringSwitch:
             let settings = settings(forSelectNodeID: sourceNode.id)
             let selectValue = sourceNode.inputPorts.first(where: { $0.name == "Select" }).flatMap {
@@ -23149,7 +25609,7 @@ final class GraphStore: ObservableObject {
                     activeFeedbackNodeID: childFeedbackNodeID
                 )
             ))
-        case .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale:
+        case .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .scalarSmooth:
             return nil
         case .trackball:
             return nil
@@ -23176,7 +25636,7 @@ final class GraphStore: ObservableObject {
                     Float(max(0, min(1, settings.alpha)))
                 )
             ))
-        case .color, .hslColor, .colorVariable, .colorSplit, .scalarArray, .scalarArrayVariable, .stringArray, .stringArrayVariable, .colorArray, .colorArrayVariable, .imageArray, .imageArrayVariable, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .arrayCount, .iteratorVariables, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .keyboard, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .expression, .beatDetect:
+        case .color, .hslColor, .colorVariable, .colorSplit, .scalarArray, .scalarArrayVariable, .stringArray, .stringArrayVariable, .colorArray, .colorArrayVariable, .imageArray, .imageArrayVariable, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .arrayCount, .iteratorVariables, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .keyboard, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .expression, .beatDetect, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle:
             return nil
         case .imageArrayIndex:
             return imageArraySelectedSource(for: sourceNode).map(renderConfiguration(from:))
@@ -23463,6 +25923,11 @@ final class GraphStore: ObservableObject {
                 material: resolvedConnectedScene3DMaterial(for: sourceNode),
                 materialMaps: resolvedConnectedScene3DMaterialMaps(for: sourceNode)
             ))
+        case .scene3DGaussianSplat:
+            return .scene3DGaussianSplat(PreviewScene3DGaussianSplatPass(
+                nodeID: sourceNode.id,
+                settings: resolvedScene3DGaussianSplatSettings(forNodeID: sourceNode.id)
+            ))
         case .scene3DParticle:
             return .scene3DParticle(PreviewScene3DParticlePass(
                 nodeID: sourceNode.id,
@@ -23491,7 +25956,10 @@ final class GraphStore: ObservableObject {
                 cameraPanX: Float(panX),
                 cameraPanY: Float(panY),
                 backgroundAlpha: Float(settings.backgroundAlpha),
-                defaultLightIntensity: Float(settings.defaultLightIntensity)
+                defaultLightIntensity: Float(settings.defaultLightIntensity),
+                waterDistortion: Float(settings.waterDistortion),
+                waterScale: Float(settings.waterScale),
+                waterSpeed: Float(settings.waterSpeed)
             ))
         case .mix:
             guard
@@ -23590,6 +26058,8 @@ final class GraphStore: ObservableObject {
             return .scene3DText(pass)
         case .scene3DModel(let pass):
             return .scene3DModel(pass)
+        case .scene3DGaussianSplat(let pass):
+            return .scene3DGaussianSplat(pass)
         case .scene3DParticle(let pass):
             return .scene3DParticle(pass)
         case .scene3DSource(let sceneSource):
@@ -23600,6 +26070,8 @@ final class GraphStore: ObservableObject {
             case .text(let pass):
                 nodeID = pass.nodeID
             case .model(let pass):
+                nodeID = pass.nodeID
+            case .gaussianSplat(let pass):
                 nodeID = pass.nodeID
             case .particle(let pass):
                 nodeID = pass.nodeID
@@ -23617,7 +26089,10 @@ final class GraphStore: ObservableObject {
                 cameraPanX: 0.0,
                 cameraPanY: 0.0,
                 backgroundAlpha: 0.0,
-                defaultLightIntensity: 100.0
+                defaultLightIntensity: 100.0,
+                waterDistortion: 0.0,
+                waterScale: 3.2,
+                waterSpeed: 1.0
             ))
         case .scene3DRender(let pass):
             return .scene3DRender(pass)
@@ -23666,6 +26141,8 @@ final class GraphStore: ObservableObject {
             return .scene3DText(pass)
         case .scene3DModel(let pass):
             return .scene3DModel(pass)
+        case .scene3DGaussianSplat(let pass):
+            return .scene3DGaussianSplat(pass)
         case .scene3DParticle(let pass):
             return .scene3DParticle(pass)
         case .scene3DRender(let pass):
@@ -24118,6 +26595,15 @@ final class GraphStore: ObservableObject {
                 return .scene3DSource(.model(pass))
             }
             return .scene3DModel(pass)
+        case .scene3DGaussianSplat:
+            let pass = PreviewScene3DGaussianSplatPass(
+                nodeID: sourceNode.id,
+                settings: resolvedScene3DGaussianSplatSettings(forNodeID: sourceNode.id)
+            )
+            if case .scene3DSignal = sourcePort.kind {
+                return .scene3DSource(.gaussianSplat(pass))
+            }
+            return .scene3DGaussianSplat(pass)
         case .scene3DParticle:
             let pass = PreviewScene3DParticlePass(
                 nodeID: sourceNode.id,
@@ -24155,7 +26641,10 @@ final class GraphStore: ObservableObject {
                 cameraPanX: Float(panX),
                 cameraPanY: Float(panY),
                 backgroundAlpha: Float(settings.backgroundAlpha),
-                defaultLightIntensity: Float(settings.defaultLightIntensity)
+                defaultLightIntensity: Float(settings.defaultLightIntensity),
+                waterDistortion: Float(settings.waterDistortion),
+                waterScale: Float(settings.waterScale),
+                waterSpeed: Float(settings.waterSpeed)
             ))
         case .image:
             guard let settings = settings(forImageNodeID: sourceNode.id) else {
@@ -24725,6 +27214,13 @@ final class GraphStore: ObservableObject {
                             name: "Y",
                             direction: .output,
                             kind: .scalarSignal("scrollY")
+                        ),
+                        GraphPort(
+                            id: "scroll:active",
+                            nodeID: nodeID,
+                            name: "Active",
+                            direction: .output,
+                            kind: .scalarSignal("active")
                         )
                     ]
                 )
@@ -24919,7 +27415,8 @@ final class GraphStore: ObservableObject {
                         GraphPort(id: "trackball:\(nodeID.uuidString):distance", nodeID: nodeID, name: "Distance", direction: .output, kind: .scalarSignal("distance")),
                         GraphPort(id: "trackball:\(nodeID.uuidString):rotationX", nodeID: nodeID, name: "Rotation X", direction: .output, kind: .scalarSignal("rotationX")),
                         GraphPort(id: "trackball:\(nodeID.uuidString):rotationY", nodeID: nodeID, name: "Rotation Y", direction: .output, kind: .scalarSignal("rotationY")),
-                        GraphPort(id: "trackball:\(nodeID.uuidString):dragging", nodeID: nodeID, name: "Dragging", direction: .output, kind: .scalarSignal("dragging"))
+                        GraphPort(id: "trackball:\(nodeID.uuidString):dragging", nodeID: nodeID, name: "Dragging", direction: .output, kind: .scalarSignal("dragging")),
+                        GraphPort(id: "trackball:\(nodeID.uuidString):scrollActive", nodeID: nodeID, name: "Scroll Active", direction: .output, kind: .scalarSignal("scrollActive"))
                     ]
                 )
             case "depthEstimate":
@@ -25903,6 +28400,192 @@ final class GraphStore: ObservableObject {
                     ],
                     outputPorts: []
                 )
+            case "midiCCInput":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .midiCCInput,
+                    position: position,
+                    inputPorts: [],
+                    outputPorts: [
+                        GraphPort(id: "midiccin:\(nodeID.uuidString):value", nodeID: nodeID, name: "Value", direction: .output, kind: .scalarSignal("value")),
+                        GraphPort(id: "midiccin:\(nodeID.uuidString):normalized", nodeID: nodeID, name: "Normalized", direction: .output, kind: .scalarSignal("normalized")),
+                        GraphPort(id: "midiccin:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger"))
+                    ]
+                )
+            case "midiNoteInput":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .midiNoteInput,
+                    position: position,
+                    inputPorts: [],
+                    outputPorts: [
+                        GraphPort(id: "midinotein:\(nodeID.uuidString):note", nodeID: nodeID, name: "Note", direction: .output, kind: .scalarSignal("note")),
+                        GraphPort(id: "midinotein:\(nodeID.uuidString):velocity", nodeID: nodeID, name: "Velocity", direction: .output, kind: .scalarSignal("velocity")),
+                        GraphPort(id: "midinotein:\(nodeID.uuidString):normalized", nodeID: nodeID, name: "Normalized", direction: .output, kind: .scalarSignal("normalized")),
+                        GraphPort(id: "midinotein:\(nodeID.uuidString):gate", nodeID: nodeID, name: "Gate", direction: .output, kind: .scalarSignal("gate")),
+                        GraphPort(id: "midinotein:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger"))
+                    ]
+                )
+            case "oscInput":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscInput,
+                    position: position,
+                    inputPorts: [],
+                    outputPorts: [
+                        GraphPort(id: "oscin:\(nodeID.uuidString):float", nodeID: nodeID, name: "Float", direction: .output, kind: .scalarSignal("float")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):int", nodeID: nodeID, name: "Int", direction: .output, kind: .scalarSignal("int")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .output, kind: .scalarSignal("float2")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .output, kind: .scalarSignal("int2")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .output, kind: .scalarSignal("float3")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .output, kind: .scalarSignal("int3")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .output, kind: .scalarSignal("float4")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .output, kind: .scalarSignal("int4")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):text", nodeID: nodeID, name: "Text", direction: .output, kind: .stringSignal("text")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .output, kind: .stringSignal("text2")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .output, kind: .stringSignal("text3")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .output, kind: .stringSignal("text4")),
+                        GraphPort(id: "oscin:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address"))
+                    ]
+                )
+            case "oscOutput":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscOutput,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscout:\(nodeID.uuidString):float", nodeID: nodeID, name: "Float", direction: .input, kind: .scalarSignal("float")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):int", nodeID: nodeID, name: "Int", direction: .input, kind: .scalarSignal("int")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):text", nodeID: nodeID, name: "Text", direction: .input, kind: .stringSignal("text")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .input, kind: .scalarSignal("float2")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .input, kind: .scalarSignal("int2")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .input, kind: .stringSignal("text2")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .input, kind: .scalarSignal("float3")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .input, kind: .scalarSignal("int3")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .input, kind: .stringSignal("text3")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .input, kind: .scalarSignal("float4")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .input, kind: .scalarSignal("int4")),
+                        GraphPort(id: "oscout:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .input, kind: .stringSignal("text4"))
+                    ],
+                    outputPorts: []
+                )
+            case "oscReceive":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscReceive,
+                    position: position,
+                    inputPorts: [],
+                    outputPorts: [
+                        GraphPort(id: "oscreceive:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet")),
+                        GraphPort(id: "oscreceive:\(nodeID.uuidString):trigger", nodeID: nodeID, name: "Trigger", direction: .output, kind: .scalarSignal("trigger")),
+                        GraphPort(id: "oscreceive:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address"))
+                    ]
+                )
+            case "oscSend":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscSend,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscsend:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+                    ],
+                    outputPorts: []
+                )
+            case "oscGet4":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscGet4,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscget:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+                    ],
+                    outputPorts: [
+                        GraphPort(id: "oscget:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):float1", nodeID: nodeID, name: "Float 1", direction: .output, kind: .scalarSignal("float1")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .output, kind: .scalarSignal("float2")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .output, kind: .scalarSignal("float3")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .output, kind: .scalarSignal("float4")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):int1", nodeID: nodeID, name: "Int 1", direction: .output, kind: .scalarSignal("int1")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .output, kind: .scalarSignal("int2")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .output, kind: .scalarSignal("int3")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .output, kind: .scalarSignal("int4")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):text1", nodeID: nodeID, name: "Text 1", direction: .output, kind: .stringSignal("text1")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .output, kind: .stringSignal("text2")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .output, kind: .stringSignal("text3")),
+                        GraphPort(id: "oscget:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .output, kind: .stringSignal("text4"))
+                    ]
+                )
+            case "oscGetArray":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscGetArray,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscgetarray:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .input, kind: .oscPacketSignal("packet"))
+                    ],
+                    outputPorts: [
+                        GraphPort(id: "oscgetarray:\(nodeID.uuidString):address", nodeID: nodeID, name: "Address", direction: .output, kind: .stringSignal("address")),
+                        GraphPort(id: "oscgetarray:\(nodeID.uuidString):array", nodeID: nodeID, name: "Array", direction: .output, kind: .scalarArraySignal("array"))
+                    ]
+                )
+            case "oscMake4":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscMake4,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):float1", nodeID: nodeID, name: "Float 1", direction: .input, kind: .scalarSignal("float1")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):int1", nodeID: nodeID, name: "Int 1", direction: .input, kind: .scalarSignal("int1")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):text1", nodeID: nodeID, name: "Text 1", direction: .input, kind: .stringSignal("text1")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):float2", nodeID: nodeID, name: "Float 2", direction: .input, kind: .scalarSignal("float2")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):int2", nodeID: nodeID, name: "Int 2", direction: .input, kind: .scalarSignal("int2")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):text2", nodeID: nodeID, name: "Text 2", direction: .input, kind: .stringSignal("text2")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):float3", nodeID: nodeID, name: "Float 3", direction: .input, kind: .scalarSignal("float3")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):int3", nodeID: nodeID, name: "Int 3", direction: .input, kind: .scalarSignal("int3")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):text3", nodeID: nodeID, name: "Text 3", direction: .input, kind: .stringSignal("text3")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):float4", nodeID: nodeID, name: "Float 4", direction: .input, kind: .scalarSignal("float4")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):int4", nodeID: nodeID, name: "Int 4", direction: .input, kind: .scalarSignal("int4")),
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):text4", nodeID: nodeID, name: "Text 4", direction: .input, kind: .stringSignal("text4"))
+                    ],
+                    outputPorts: [
+                        GraphPort(id: "oscmake:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+                    ]
+                )
+            case "oscMakeArray":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscMakeArray,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "oscmakearray:\(nodeID.uuidString):array", nodeID: nodeID, name: "Array", direction: .input, kind: .scalarArraySignal("array"))
+                    ],
+                    outputPorts: [
+                        GraphPort(id: "oscmakearray:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+                    ]
+                )
+            case "oscBundle":
+                let packetCount = normalizedOSCBundleSettings(oscBundleNodeSettings[nodeID] ?? OSCBundleNodeSettings()).packetCount
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .oscBundle,
+                    position: position,
+                    inputPorts: makeOSCBundleInputPorts(nodeID: nodeID, packetCount: packetCount),
+                    outputPorts: [
+                        GraphPort(id: "oscbundle:\(nodeID.uuidString):packet", nodeID: nodeID, name: "Packet", direction: .output, kind: .oscPacketSignal("packet"))
+                    ]
+                )
             case "note":
                 return GraphNode(
                     id: nodeID,
@@ -26143,6 +28826,15 @@ final class GraphStore: ObservableObject {
                         GraphPort(id: "scene3dmodel:\(nodeID.uuidString):output", nodeID: nodeID, name: "Shader", direction: .output, kind: .fragmentShader)
                     ]
                 )
+            case "scene3DGaussianSplat":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .scene3DGaussianSplat,
+                    position: position,
+                    inputPorts: makeScene3DGaussianSplatInputPorts(nodeID: nodeID),
+                    outputPorts: makeScene3DGaussianSplatOutputPorts(nodeID: nodeID)
+                )
             case "scene3DParticle":
                 return GraphNode(
                     id: nodeID,
@@ -26360,6 +29052,21 @@ final class GraphStore: ObservableObject {
                         )
                     ]
                 )
+            case "scalarSmooth":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .scalarSmooth,
+                    position: position,
+                    inputPorts: [
+                        GraphPort(id: "scalarsmooth:\(nodeID.uuidString):target", nodeID: nodeID, name: "Target", direction: .input, kind: .scalarSignal("target")),
+                        GraphPort(id: "scalarsmooth:\(nodeID.uuidString):amount", nodeID: nodeID, name: "Amount", direction: .input, kind: .scalarSignal("amount")),
+                        GraphPort(id: "scalarsmooth:\(nodeID.uuidString):inertia", nodeID: nodeID, name: "Inertia", direction: .input, kind: .scalarSignal("inertia"))
+                    ],
+                    outputPorts: [
+                        GraphPort(id: "scalarsmooth:\(nodeID.uuidString):value", nodeID: nodeID, name: "Value", direction: .output, kind: .scalarSignal("value"))
+                    ]
+                )
             case "monitor":
                 return GraphNode(
                     id: nodeID,
@@ -26536,29 +29243,7 @@ final class GraphStore: ObservableObject {
                     title: savedNode.title,
                     kind: .videoPlayer,
                     position: position,
-                    inputPorts: [
-                        GraphPort(
-                            id: "videoplayer:\(nodeID.uuidString):play",
-                            nodeID: nodeID,
-                            name: "Play",
-                            direction: .input,
-                            kind: .scalarSignal("play")
-                        ),
-                        GraphPort(
-                            id: "videoplayer:\(nodeID.uuidString):rate",
-                            nodeID: nodeID,
-                            name: "Rate",
-                            direction: .input,
-                            kind: .scalarSignal("rate")
-                        ),
-                        GraphPort(
-                            id: "videoplayer:\(nodeID.uuidString):seek",
-                            nodeID: nodeID,
-                            name: "Seek",
-                            direction: .input,
-                            kind: .scalarSignal("seek")
-                        )
-                    ],
+                    inputPorts: makeVideoPlayerInputPorts(nodeID: nodeID),
                     outputPorts: [
                         GraphPort(
                             id: "videoplayer:\(nodeID.uuidString):output",
@@ -26977,6 +29662,12 @@ final class GraphStore: ObservableObject {
         holdNodeRuntimeStates = Dictionary(uniqueKeysWithValues: holdNodeSettings.map { key, value in
             (key, HoldNodeRuntimeState(heldValue: value.initialValue))
         })
+        scalarSmoothNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scalarSmoothNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        scalarSmoothNodeRuntimeStates = Dictionary(uniqueKeysWithValues: scalarSmoothNodeSettings.map { key, value in
+            (key, ScalarSmoothNodeRuntimeState(value: value.initialValue))
+        })
         handTrackerNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.handTrackerNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
@@ -27183,6 +29874,30 @@ final class GraphStore: ObservableObject {
         midiOutNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.midiOutNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
+        midiCCNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.midiCCNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        midiInputCCNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.midiInputCCNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        midiInputNoteNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.midiInputNoteNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        oscInputNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.oscInputNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        oscOutputNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.oscOutputNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        oscSendNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.oscSendNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        oscMessageNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.oscMessageNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        oscBundleNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.oscBundleNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, normalizedOSCBundleSettings(value)) }
+        })
         noteNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.noteNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
@@ -27214,6 +29929,9 @@ final class GraphStore: ObservableObject {
             UUID(uuidString: key).map { ($0, value) }
         })
         scene3DModelNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DModelNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        scene3DGaussianSplatNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DGaussianSplatNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
         scene3DParticleNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DParticleNodeSettings.compactMap { key, value in
@@ -27548,6 +30266,24 @@ final class GraphStore: ObservableObject {
                     document = updatedDocument
                 }
             }
+            if case .scene3DGaussianSplat = node.kind {
+                if scene3DGaussianSplatNodeSettings[node.id] == nil {
+                    scene3DGaussianSplatNodeSettings[node.id] = Scene3DGaussianSplatNodeSettings()
+                }
+                if let index = document.nodes.firstIndex(where: { $0.id == node.id }),
+                   (document.nodes[index].inputPorts.count != makeScene3DGaussianSplatInputPorts(nodeID: node.id).count || document.nodes[index].outputPorts.count != makeScene3DGaussianSplatOutputPorts(nodeID: node.id).count) {
+                    var updatedDocument = document
+                    updatedDocument.nodes[index] = GraphNode(
+                        id: updatedDocument.nodes[index].id,
+                        title: updatedDocument.nodes[index].title,
+                        kind: updatedDocument.nodes[index].kind,
+                        position: updatedDocument.nodes[index].position,
+                        inputPorts: makeScene3DGaussianSplatInputPorts(nodeID: node.id),
+                        outputPorts: makeScene3DGaussianSplatOutputPorts(nodeID: node.id)
+                    )
+                    document = updatedDocument
+                }
+            }
             if case .scene3DParticle = node.kind {
                 if scene3DParticleNodeSettings[node.id] == nil {
                     scene3DParticleNodeSettings[node.id] = Scene3DParticleNodeSettings()
@@ -27674,6 +30410,37 @@ final class GraphStore: ObservableObject {
                 settings.destinationName = midiRouter.preferredDestinationName() ?? ""
                 midiCCNodeSettings[node.id] = settings
             }
+            if case .midiCCInput = node.kind, midiInputCCNodeSettings[node.id] == nil {
+                midiInputCCNodeSettings[node.id] = MIDIInputCCNodeSettings()
+            }
+            if case .midiNoteInput = node.kind, midiInputNoteNodeSettings[node.id] == nil {
+                midiInputNoteNodeSettings[node.id] = MIDIInputNoteNodeSettings()
+            }
+            if case .oscInput = node.kind, oscInputNodeSettings[node.id] == nil {
+                let settings = OSCInputNodeSettings()
+                oscInputNodeSettings[node.id] = settings
+                oscInputRouter.ensureListening(on: settings.port)
+            }
+            if case .oscOutput = node.kind, oscOutputNodeSettings[node.id] == nil {
+                oscOutputNodeSettings[node.id] = OSCOutputNodeSettings()
+            }
+            if case .oscReceive = node.kind, oscInputNodeSettings[node.id] == nil {
+                let settings = OSCInputNodeSettings()
+                oscInputNodeSettings[node.id] = settings
+                oscInputRouter.ensureListening(on: settings.port)
+            }
+            if case .oscSend = node.kind, oscSendNodeSettings[node.id] == nil {
+                oscSendNodeSettings[node.id] = OSCSendNodeSettings()
+            }
+            if case .oscMake4 = node.kind, oscMessageNodeSettings[node.id] == nil {
+                oscMessageNodeSettings[node.id] = OSCMessageNodeSettings()
+            }
+            if case .oscMakeArray = node.kind, oscMessageNodeSettings[node.id] == nil {
+                oscMessageNodeSettings[node.id] = OSCMessageNodeSettings()
+            }
+            if case .oscBundle = node.kind, oscBundleNodeSettings[node.id] == nil {
+                oscBundleNodeSettings[node.id] = OSCBundleNodeSettings()
+            }
             if case .slider = node.kind, sliderNodeSettings[node.id] == nil {
                 sliderNodeSettings[node.id] = SliderNodeSettings()
             }
@@ -27711,6 +30478,11 @@ final class GraphStore: ObservableObject {
                 let settings = HoldNodeSettings()
                 holdNodeSettings[node.id] = settings
                 holdNodeRuntimeStates[node.id] = HoldNodeRuntimeState(heldValue: settings.initialValue)
+            }
+            if case .scalarSmooth = node.kind, scalarSmoothNodeSettings[node.id] == nil {
+                let settings = ScalarSmoothNodeSettings()
+                scalarSmoothNodeSettings[node.id] = settings
+                scalarSmoothNodeRuntimeStates[node.id] = ScalarSmoothNodeRuntimeState(value: settings.initialValue)
             }
             if case .trail = node.kind, trailNodeSettings[node.id] == nil {
                 trailNodeSettings[node.id] = TrailNodeSettings()
@@ -27793,6 +30565,24 @@ final class GraphStore: ObservableObject {
                     document = updatedDocument
                 }
             }
+            if case .scene3DGaussianSplat = node.kind {
+                if scene3DGaussianSplatNodeSettings[node.id] == nil {
+                    scene3DGaussianSplatNodeSettings[node.id] = Scene3DGaussianSplatNodeSettings()
+                }
+                if let index = document.nodes.firstIndex(where: { $0.id == node.id }),
+                   (document.nodes[index].inputPorts.count != makeScene3DGaussianSplatInputPorts(nodeID: node.id).count || document.nodes[index].outputPorts.count != makeScene3DGaussianSplatOutputPorts(nodeID: node.id).count) {
+                    var updatedDocument = document
+                    updatedDocument.nodes[index] = GraphNode(
+                        id: updatedDocument.nodes[index].id,
+                        title: updatedDocument.nodes[index].title,
+                        kind: updatedDocument.nodes[index].kind,
+                        position: updatedDocument.nodes[index].position,
+                        inputPorts: makeScene3DGaussianSplatInputPorts(nodeID: node.id),
+                        outputPorts: makeScene3DGaussianSplatOutputPorts(nodeID: node.id)
+                    )
+                    document = updatedDocument
+                }
+            }
             if case .transition = node.kind, transitionNodeSettings[node.id] == nil {
                 transitionNodeSettings[node.id] = TransitionNodeSettings()
                 transitionNodeRuntimeStates[node.id] = TransitionNodeRuntimeState()
@@ -27839,7 +30629,9 @@ final class GraphStore: ObservableObject {
         restoredDocument = syncArrayNodePorts(in: restoredDocument)
         restoredDocument = syncTextImageNodePorts(in: restoredDocument)
         restoredDocument = syncHSLColorNodePorts(in: restoredDocument)
+        restoredDocument = syncVideoPlayerNodePorts(in: restoredDocument)
         restoredDocument = syncLayerNodePorts(in: restoredDocument)
+        restoredDocument = syncOSCBundleNodePorts(in: restoredDocument)
 
         let validPortIDs = Set(restoredDocument.nodes.flatMap { $0.allPorts }.map { $0.id })
         restoredDocument.connections = snapshot.connections.compactMap { savedConnection -> GraphConnection? in
@@ -28356,6 +31148,61 @@ final class GraphStore: ObservableObject {
         midiCCNodeSettings = midiCCNodeSettings.filter { liveNodeIDs.contains($0.key) }
     }
 
+    private func pruneMIDIInputNodeSettings() {
+        let liveCCNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .midiCCInput = node.kind { return node.id }
+            return nil
+        })
+        let liveNoteNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .midiNoteInput = node.kind { return node.id }
+            return nil
+        })
+
+        midiInputCCNodeSettings = midiInputCCNodeSettings.filter { liveCCNodeIDs.contains($0.key) }
+        midiInputCCNodeRuntimeStates = midiInputCCNodeRuntimeStates.filter { liveCCNodeIDs.contains($0.key) }
+        midiInputNoteNodeSettings = midiInputNoteNodeSettings.filter { liveNoteNodeIDs.contains($0.key) }
+        midiInputNoteNodeRuntimeStates = midiInputNoteNodeRuntimeStates.filter { liveNoteNodeIDs.contains($0.key) }
+    }
+
+    private func pruneOSCNodeSettings() {
+        let liveInputNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            switch node.kind {
+            case .oscInput, .oscReceive:
+                return node.id
+            default:
+                return nil
+            }
+        })
+        let liveOutputNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            switch node.kind {
+            case .oscOutput, .oscSend:
+                return node.id
+            default:
+                return nil
+            }
+        })
+        let liveMessageNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            switch node.kind {
+            case .oscMake4, .oscMakeArray:
+                return node.id
+            default:
+                return nil
+            }
+        })
+        let liveBundleNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .oscBundle = node.kind { return node.id }
+            return nil
+        })
+
+        oscInputNodeSettings = oscInputNodeSettings.filter { liveInputNodeIDs.contains($0.key) }
+        oscInputNodeRuntimeStates = oscInputNodeRuntimeStates.filter { liveInputNodeIDs.contains($0.key) }
+        oscOutputNodeSettings = oscOutputNodeSettings.filter { liveOutputNodeIDs.contains($0.key) }
+        oscSendNodeSettings = oscSendNodeSettings.filter { liveOutputNodeIDs.contains($0.key) }
+        oscOutputNodeRuntimeStates = oscOutputNodeRuntimeStates.filter { liveOutputNodeIDs.contains($0.key) }
+        oscMessageNodeSettings = oscMessageNodeSettings.filter { liveMessageNodeIDs.contains($0.key) }
+        oscBundleNodeSettings = oscBundleNodeSettings.filter { liveBundleNodeIDs.contains($0.key) }
+    }
+
     private func pruneNoteNodeSettings() {
         let liveNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
             if case .note = node.kind { return node.id }
@@ -28412,6 +31259,15 @@ final class GraphStore: ObservableObject {
         })
         holdNodeSettings = holdNodeSettings.filter { liveHoldNodeIDs.contains($0.key) }
         holdNodeRuntimeStates = holdNodeRuntimeStates.filter { liveHoldNodeIDs.contains($0.key) }
+    }
+
+    private func pruneScalarSmoothNodeSettings() {
+        let liveNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .scalarSmooth = node.kind { return node.id }
+            return nil
+        })
+        scalarSmoothNodeSettings = scalarSmoothNodeSettings.filter { liveNodeIDs.contains($0.key) }
+        scalarSmoothNodeRuntimeStates = scalarSmoothNodeRuntimeStates.filter { liveNodeIDs.contains($0.key) }
     }
 
     private func pruneHitZoneNodeSettings() {
@@ -28590,6 +31446,19 @@ final class GraphStore: ObservableObject {
         )
 
         return ports
+    }
+
+    private func makeOSCBundleInputPorts(nodeID: GraphNode.ID, packetCount: Int) -> [GraphPort] {
+        let normalizedCount = max(1, packetCount)
+        return (1...normalizedCount).map { index in
+            GraphPort(
+                id: "oscbundle:\(nodeID.uuidString):packet\(index)",
+                nodeID: nodeID,
+                name: "Packet \(index)",
+                direction: .input,
+                kind: .oscPacketSignal("packet\(index)")
+            )
+        }
     }
 
     private func makeCompareInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
@@ -29091,6 +31960,39 @@ final class GraphStore: ObservableObject {
         ]
     }
 
+    private func syncVideoPlayerNodePorts(in document: ShaderDocument) -> ShaderDocument {
+        var updatedDocument = document
+        var removedPortIDs = Set<GraphPort.ID>()
+
+        updatedDocument.nodes = updatedDocument.nodes.map { node in
+            guard case .videoPlayer = node.kind else {
+                return node
+            }
+
+            let newInputPorts = makeVideoPlayerInputPorts(nodeID: node.id)
+            let preservedPortIDs = Set(newInputPorts.map(\.id))
+            let previousPortIDs = Set(node.inputPorts.map(\.id))
+            removedPortIDs.formUnion(previousPortIDs.subtracting(preservedPortIDs))
+
+            return GraphNode(
+                id: node.id,
+                title: node.title,
+                kind: node.kind,
+                position: node.position,
+                inputPorts: newInputPorts,
+                outputPorts: node.outputPorts
+            )
+        }
+
+        if removedPortIDs.isEmpty == false {
+            updatedDocument.connections.removeAll { connection in
+                removedPortIDs.contains(connection.fromPortID) || removedPortIDs.contains(connection.toPortID)
+            }
+        }
+
+        return updatedDocument
+    }
+
     private func normalizedLayerSettings(_ settings: LayerNodeSettings) -> LayerNodeSettings {
         var normalized = settings
         normalized.layerCount = max(2, normalized.layerCount)
@@ -29099,6 +32001,12 @@ final class GraphStore: ObservableObject {
         } else if normalized.layerOpacities.count > normalized.layerCount {
             normalized.layerOpacities = Array(normalized.layerOpacities.prefix(normalized.layerCount))
         }
+        return normalized
+    }
+
+    private func normalizedOSCBundleSettings(_ settings: OSCBundleNodeSettings) -> OSCBundleNodeSettings {
+        var normalized = settings
+        normalized.packetCount = max(1, normalized.packetCount)
         return normalized
     }
 
@@ -29285,6 +32193,40 @@ final class GraphStore: ObservableObject {
         return updatedDocument
     }
 
+    private func syncOSCBundleNodePorts(in document: ShaderDocument) -> ShaderDocument {
+        var updatedDocument = document
+        var removedPortIDs = Set<GraphPort.ID>()
+
+        updatedDocument.nodes = updatedDocument.nodes.map { node in
+            guard case .oscBundle = node.kind else {
+                return node
+            }
+
+            let settings = normalizedOSCBundleSettings(oscBundleNodeSettings[node.id] ?? OSCBundleNodeSettings())
+            let newInputPorts = makeOSCBundleInputPorts(nodeID: node.id, packetCount: settings.packetCount)
+            let preservedPortIDs = Set(newInputPorts.map(\.id))
+            let previousPortIDs = Set(node.inputPorts.map(\.id))
+            removedPortIDs.formUnion(previousPortIDs.subtracting(preservedPortIDs))
+
+            return GraphNode(
+                id: node.id,
+                title: node.title,
+                kind: node.kind,
+                position: node.position,
+                inputPorts: newInputPorts,
+                outputPorts: node.outputPorts
+            )
+        }
+
+        if removedPortIDs.isEmpty == false {
+            updatedDocument.connections.removeAll { connection in
+                removedPortIDs.contains(connection.fromPortID) || removedPortIDs.contains(connection.toPortID)
+            }
+        }
+
+        return updatedDocument
+    }
+
     private func syncScene3DRenderNodePorts(in document: ShaderDocument) -> ShaderDocument {
         var updatedDocument = document
         var removedPortIDs = Set<GraphPort.ID>()
@@ -29377,6 +32319,7 @@ final class GraphStore: ObservableObject {
         currentGraphFileURL = url
         refreshCurrentGraphDisplayName()
         UserDefaults.standard.set(url.path, forKey: GraphPreferenceKey.lastGraphPath)
+        UserDefaults.standard.removeObject(forKey: GraphPreferenceKey.lastGraphBookmark)
         if let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
             UserDefaults.standard.set(bookmark, forKey: GraphPreferenceKey.lastGraphBookmark)
         }
@@ -29391,8 +32334,39 @@ final class GraphStore: ObservableObject {
     }
 
     private func restoreLastOpenedGraphIfPossible(from defaults: UserDefaults) {
-        if restoreSessionSnapshotIfPossible() {
-            return
+        if let path = defaults.string(forKey: GraphPreferenceKey.lastGraphPath) {
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    let source = try readSecurityScopedFile(at: url)
+                    try restoreGraphSnapshot(from: source)
+                    currentGraphFileURL = url
+                    refreshCurrentGraphDisplayName()
+                    if preferredCanvasViewportCenter == nil {
+                        preferredCanvasViewportCenter = loadCanvasViewport(for: url)
+                    }
+                    canvasViewportRestoreRequestID = UUID()
+                    beginViewportDirtyGraceWindow()
+                    markCurrentGraphSaved()
+                    persistSessionSnapshot()
+                    restartOSCInputRouting()
+                    if let refreshedBookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                        defaults.set(refreshedBookmark, forKey: GraphPreferenceKey.lastGraphBookmark)
+                    }
+                    return
+                } catch {
+                    statusMessage = "Could not reopen last graph path: \(error.localizedDescription)"
+                    defaults.removeObject(forKey: GraphPreferenceKey.lastGraphBookmark)
+                    if restoreSessionSnapshotIfPossible() {
+                        restartOSCInputRouting()
+                        return
+                    }
+                    return
+                }
+            } else {
+                defaults.removeObject(forKey: GraphPreferenceKey.lastGraphPath)
+                defaults.removeObject(forKey: GraphPreferenceKey.lastGraphBookmark)
+            }
         }
 
         if let bookmark = defaults.data(forKey: GraphPreferenceKey.lastGraphBookmark) {
@@ -29415,6 +32389,7 @@ final class GraphStore: ObservableObject {
                     beginViewportDirtyGraceWindow()
                     markCurrentGraphSaved()
                     persistSessionSnapshot()
+                    restartOSCInputRouting()
 
                     if isStale,
                        let refreshedBookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
@@ -29424,38 +32399,13 @@ final class GraphStore: ObservableObject {
                     return
                 } catch {
                     statusMessage = "Could not reopen last graph bookmark: \(error.localizedDescription)"
+                    defaults.removeObject(forKey: GraphPreferenceKey.lastGraphBookmark)
                 }
             }
         }
 
-        guard let path = defaults.string(forKey: GraphPreferenceKey.lastGraphPath) else {
-            return
-        }
-
-        let url = URL(fileURLWithPath: path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            defaults.removeObject(forKey: GraphPreferenceKey.lastGraphPath)
-            defaults.removeObject(forKey: GraphPreferenceKey.lastGraphBookmark)
-            return
-        }
-
-        do {
-            let source = try readSecurityScopedFile(at: url)
-            try restoreGraphSnapshot(from: source)
-            currentGraphFileURL = url
-            refreshCurrentGraphDisplayName()
-            if preferredCanvasViewportCenter == nil {
-                preferredCanvasViewportCenter = loadCanvasViewport(for: url)
-            }
-            canvasViewportRestoreRequestID = UUID()
-            beginViewportDirtyGraceWindow()
-            markCurrentGraphSaved()
-            persistSessionSnapshot()
-            if let refreshedBookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                defaults.set(refreshedBookmark, forKey: GraphPreferenceKey.lastGraphBookmark)
-            }
-        } catch {
-            statusMessage = "Could not reopen last graph: \(error.localizedDescription)"
+        if restoreSessionSnapshotIfPossible() {
+            restartOSCInputRouting()
         }
     }
 
@@ -29476,6 +32426,7 @@ final class GraphStore: ObservableObject {
                     scaleNodeSettings: scaleNodeSettings,
                     interpolatorNodeSettings: interpolatorNodeSettings,
                     holdNodeSettings: holdNodeSettings,
+                    scalarSmoothNodeSettings: scalarSmoothNodeSettings,
                     handTrackerNodeSettings: handTrackerNodeSettings,
                     pinchNodeSettings: pinchNodeSettings,
                     scrollGestureNodeSettings: scrollGestureNodeSettings,
@@ -29533,6 +32484,13 @@ final class GraphStore: ObservableObject {
                     iteratorNodeSettings: iteratorNodeSettings,
                     midiOutNodeSettings: midiOutNodeSettings,
                     midiCCNodeSettings: midiCCNodeSettings,
+                    midiInputCCNodeSettings: midiInputCCNodeSettings,
+                    midiInputNoteNodeSettings: midiInputNoteNodeSettings,
+                    oscInputNodeSettings: oscInputNodeSettings,
+                    oscOutputNodeSettings: oscOutputNodeSettings,
+                    oscSendNodeSettings: oscSendNodeSettings,
+                    oscMessageNodeSettings: oscMessageNodeSettings,
+                    oscBundleNodeSettings: oscBundleNodeSettings,
                     noteNodeSettings: noteNodeSettings,
                     transformNodeSettings: transformNodeSettings,
                     billboardNodeSettings: billboardNodeSettings,
@@ -29544,6 +32502,7 @@ final class GraphStore: ObservableObject {
                     scene3DPrimitiveNodeSettings: scene3DPrimitiveNodeSettings,
                     scene3DTextNodeSettings: scene3DTextNodeSettings,
                     scene3DModelNodeSettings: scene3DModelNodeSettings,
+                    scene3DGaussianSplatNodeSettings: scene3DGaussianSplatNodeSettings,
                     scene3DParticleNodeSettings: scene3DParticleNodeSettings,
                     transitionNodeSettings: transitionNodeSettings,
                     trailNodeSettings: trailNodeSettings,
@@ -29699,6 +32658,7 @@ final class GraphStore: ObservableObject {
             canvasViewportRestoreRequestID = UUID()
             refreshCurrentGraphDisplayName()
             markCurrentGraphSaved()
+            restartOSCInputRouting()
             return true
         } catch {
             statusMessage = "Could not restore last session: \(error.localizedDescription)"
@@ -29773,6 +32733,7 @@ final class GraphStore: ObservableObject {
         let scaleNodeSettings: [String: ScaleNodeSettings]
         let interpolatorNodeSettings: [String: InterpolatorNodeSettings]
         let holdNodeSettings: [String: HoldNodeSettings]
+        let scalarSmoothNodeSettings: [String: ScalarSmoothNodeSettings]
         let handTrackerNodeSettings: [String: HandTrackerNodeSettings]
         let pinchNodeSettings: [String: PinchNodeSettings]
         let scrollGestureNodeSettings: [String: ScrollGestureNodeSettings]
@@ -29830,6 +32791,13 @@ final class GraphStore: ObservableObject {
         let iteratorNodeSettings: [String: IteratorNodeSettings]
         let midiOutNodeSettings: [String: MIDIOutNodeSettings]
         let midiCCNodeSettings: [String: MIDICCNodeSettings]
+        let midiInputCCNodeSettings: [String: MIDIInputCCNodeSettings]
+        let midiInputNoteNodeSettings: [String: MIDIInputNoteNodeSettings]
+        let oscInputNodeSettings: [String: OSCInputNodeSettings]
+        let oscOutputNodeSettings: [String: OSCOutputNodeSettings]
+        let oscSendNodeSettings: [String: OSCSendNodeSettings]
+        let oscMessageNodeSettings: [String: OSCMessageNodeSettings]
+        let oscBundleNodeSettings: [String: OSCBundleNodeSettings]
         let noteNodeSettings: [String: NoteNodeSettings]
         let transformNodeSettings: [String: TransformNodeSettings]
         let billboardNodeSettings: [String: BillboardNodeSettings]
@@ -29841,6 +32809,7 @@ final class GraphStore: ObservableObject {
         let scene3DPrimitiveNodeSettings: [String: Scene3DPrimitiveNodeSettings]
         let scene3DTextNodeSettings: [String: Scene3DTextNodeSettings]
         let scene3DModelNodeSettings: [String: Scene3DModelNodeSettings]
+        let scene3DGaussianSplatNodeSettings: [String: Scene3DGaussianSplatNodeSettings]
         let scene3DParticleNodeSettings: [String: Scene3DParticleNodeSettings]
         let transitionNodeSettings: [String: TransitionNodeSettings]
         let trailNodeSettings: [String: TrailNodeSettings]
@@ -29872,6 +32841,7 @@ final class GraphStore: ObservableObject {
             scaleNodeSettings: [GraphNode.ID: ScaleNodeSettings],
             interpolatorNodeSettings: [GraphNode.ID: InterpolatorNodeSettings],
             holdNodeSettings: [GraphNode.ID: HoldNodeSettings],
+            scalarSmoothNodeSettings: [GraphNode.ID: ScalarSmoothNodeSettings],
             handTrackerNodeSettings: [GraphNode.ID: HandTrackerNodeSettings],
             pinchNodeSettings: [GraphNode.ID: PinchNodeSettings],
             scrollGestureNodeSettings: [GraphNode.ID: ScrollGestureNodeSettings],
@@ -29929,6 +32899,13 @@ final class GraphStore: ObservableObject {
             iteratorNodeSettings: [GraphNode.ID: IteratorNodeSettings],
             midiOutNodeSettings: [GraphNode.ID: MIDIOutNodeSettings],
             midiCCNodeSettings: [GraphNode.ID: MIDICCNodeSettings],
+            midiInputCCNodeSettings: [GraphNode.ID: MIDIInputCCNodeSettings],
+            midiInputNoteNodeSettings: [GraphNode.ID: MIDIInputNoteNodeSettings],
+            oscInputNodeSettings: [GraphNode.ID: OSCInputNodeSettings],
+            oscOutputNodeSettings: [GraphNode.ID: OSCOutputNodeSettings],
+            oscSendNodeSettings: [GraphNode.ID: OSCSendNodeSettings],
+            oscMessageNodeSettings: [GraphNode.ID: OSCMessageNodeSettings],
+            oscBundleNodeSettings: [GraphNode.ID: OSCBundleNodeSettings],
             noteNodeSettings: [GraphNode.ID: NoteNodeSettings],
             transformNodeSettings: [GraphNode.ID: TransformNodeSettings],
             billboardNodeSettings: [GraphNode.ID: BillboardNodeSettings],
@@ -29940,6 +32917,7 @@ final class GraphStore: ObservableObject {
             scene3DPrimitiveNodeSettings: [GraphNode.ID: Scene3DPrimitiveNodeSettings],
             scene3DTextNodeSettings: [GraphNode.ID: Scene3DTextNodeSettings],
             scene3DModelNodeSettings: [GraphNode.ID: Scene3DModelNodeSettings],
+            scene3DGaussianSplatNodeSettings: [GraphNode.ID: Scene3DGaussianSplatNodeSettings],
             scene3DParticleNodeSettings: [GraphNode.ID: Scene3DParticleNodeSettings],
             transitionNodeSettings: [GraphNode.ID: TransitionNodeSettings],
             trailNodeSettings: [GraphNode.ID: TrailNodeSettings],
@@ -29983,6 +32961,9 @@ final class GraphStore: ObservableObject {
                 (key.uuidString, value)
             })
             self.holdNodeSettings = Dictionary(uniqueKeysWithValues: holdNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.scalarSmoothNodeSettings = Dictionary(uniqueKeysWithValues: scalarSmoothNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
             self.handTrackerNodeSettings = Dictionary(uniqueKeysWithValues: handTrackerNodeSettings.map { key, value in
@@ -30104,6 +33085,27 @@ final class GraphStore: ObservableObject {
             self.midiCCNodeSettings = Dictionary(uniqueKeysWithValues: midiCCNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
+            self.midiInputCCNodeSettings = Dictionary(uniqueKeysWithValues: midiInputCCNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.midiInputNoteNodeSettings = Dictionary(uniqueKeysWithValues: midiInputNoteNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.oscInputNodeSettings = Dictionary(uniqueKeysWithValues: oscInputNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.oscOutputNodeSettings = Dictionary(uniqueKeysWithValues: oscOutputNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.oscSendNodeSettings = Dictionary(uniqueKeysWithValues: oscSendNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.oscMessageNodeSettings = Dictionary(uniqueKeysWithValues: oscMessageNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.oscBundleNodeSettings = Dictionary(uniqueKeysWithValues: oscBundleNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
             self.noteNodeSettings = Dictionary(uniqueKeysWithValues: noteNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
@@ -30135,6 +33137,9 @@ final class GraphStore: ObservableObject {
                 (key.uuidString, value)
             })
             self.scene3DModelNodeSettings = Dictionary(uniqueKeysWithValues: scene3DModelNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.scene3DGaussianSplatNodeSettings = Dictionary(uniqueKeysWithValues: scene3DGaussianSplatNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
             self.scene3DParticleNodeSettings = Dictionary(uniqueKeysWithValues: scene3DParticleNodeSettings.map { key, value in
@@ -30202,6 +33207,7 @@ final class GraphStore: ObservableObject {
             case scaleNodeSettings
             case interpolatorNodeSettings
             case holdNodeSettings
+            case scalarSmoothNodeSettings
             case handTrackerNodeSettings
             case pinchNodeSettings
             case scrollGestureNodeSettings
@@ -30259,6 +33265,13 @@ final class GraphStore: ObservableObject {
             case iteratorNodeSettings
             case midiOutNodeSettings
             case midiCCNodeSettings
+            case midiInputCCNodeSettings
+            case midiInputNoteNodeSettings
+            case oscInputNodeSettings
+            case oscOutputNodeSettings
+            case oscSendNodeSettings
+            case oscMessageNodeSettings
+            case oscBundleNodeSettings
             case noteNodeSettings
             case transformNodeSettings
             case billboardNodeSettings
@@ -30270,6 +33283,7 @@ final class GraphStore: ObservableObject {
             case scene3DPrimitiveNodeSettings
             case scene3DTextNodeSettings
             case scene3DModelNodeSettings
+            case scene3DGaussianSplatNodeSettings
             case scene3DParticleNodeSettings
             case transitionNodeSettings
             case trailNodeSettings
@@ -30305,6 +33319,7 @@ final class GraphStore: ObservableObject {
             scaleNodeSettings = try container.decodeIfPresent([String: ScaleNodeSettings].self, forKey: .scaleNodeSettings) ?? [:]
             interpolatorNodeSettings = try container.decodeIfPresent([String: InterpolatorNodeSettings].self, forKey: .interpolatorNodeSettings) ?? [:]
             holdNodeSettings = try container.decodeIfPresent([String: HoldNodeSettings].self, forKey: .holdNodeSettings) ?? [:]
+            scalarSmoothNodeSettings = try container.decodeIfPresent([String: ScalarSmoothNodeSettings].self, forKey: .scalarSmoothNodeSettings) ?? [:]
             handTrackerNodeSettings = try container.decodeIfPresent([String: HandTrackerNodeSettings].self, forKey: .handTrackerNodeSettings) ?? [:]
             pinchNodeSettings = try container.decodeIfPresent([String: PinchNodeSettings].self, forKey: .pinchNodeSettings) ?? [:]
             scrollGestureNodeSettings = try container.decodeIfPresent([String: ScrollGestureNodeSettings].self, forKey: .scrollGestureNodeSettings) ?? [:]
@@ -30362,6 +33377,13 @@ final class GraphStore: ObservableObject {
             iteratorNodeSettings = try container.decodeIfPresent([String: IteratorNodeSettings].self, forKey: .iteratorNodeSettings) ?? [:]
             midiOutNodeSettings = try container.decodeIfPresent([String: MIDIOutNodeSettings].self, forKey: .midiOutNodeSettings) ?? [:]
             midiCCNodeSettings = try container.decodeIfPresent([String: MIDICCNodeSettings].self, forKey: .midiCCNodeSettings) ?? [:]
+            midiInputCCNodeSettings = try container.decodeIfPresent([String: MIDIInputCCNodeSettings].self, forKey: .midiInputCCNodeSettings) ?? [:]
+            midiInputNoteNodeSettings = try container.decodeIfPresent([String: MIDIInputNoteNodeSettings].self, forKey: .midiInputNoteNodeSettings) ?? [:]
+            oscInputNodeSettings = try container.decodeIfPresent([String: OSCInputNodeSettings].self, forKey: .oscInputNodeSettings) ?? [:]
+            oscOutputNodeSettings = try container.decodeIfPresent([String: OSCOutputNodeSettings].self, forKey: .oscOutputNodeSettings) ?? [:]
+            oscSendNodeSettings = try container.decodeIfPresent([String: OSCSendNodeSettings].self, forKey: .oscSendNodeSettings) ?? [:]
+            oscMessageNodeSettings = try container.decodeIfPresent([String: OSCMessageNodeSettings].self, forKey: .oscMessageNodeSettings) ?? [:]
+            oscBundleNodeSettings = try container.decodeIfPresent([String: OSCBundleNodeSettings].self, forKey: .oscBundleNodeSettings) ?? [:]
             noteNodeSettings = try container.decodeIfPresent([String: NoteNodeSettings].self, forKey: .noteNodeSettings) ?? [:]
             transformNodeSettings = try container.decodeIfPresent([String: TransformNodeSettings].self, forKey: .transformNodeSettings) ?? [:]
             billboardNodeSettings = try container.decodeIfPresent([String: BillboardNodeSettings].self, forKey: .billboardNodeSettings) ?? [:]
@@ -30373,6 +33395,7 @@ final class GraphStore: ObservableObject {
             scene3DPrimitiveNodeSettings = try container.decodeIfPresent([String: Scene3DPrimitiveNodeSettings].self, forKey: .scene3DPrimitiveNodeSettings) ?? [:]
             scene3DTextNodeSettings = try container.decodeIfPresent([String: Scene3DTextNodeSettings].self, forKey: .scene3DTextNodeSettings) ?? [:]
             scene3DModelNodeSettings = try container.decodeIfPresent([String: Scene3DModelNodeSettings].self, forKey: .scene3DModelNodeSettings) ?? [:]
+            scene3DGaussianSplatNodeSettings = try container.decodeIfPresent([String: Scene3DGaussianSplatNodeSettings].self, forKey: .scene3DGaussianSplatNodeSettings) ?? [:]
             scene3DParticleNodeSettings = try container.decodeIfPresent([String: Scene3DParticleNodeSettings].self, forKey: .scene3DParticleNodeSettings) ?? [:]
             transitionNodeSettings = try container.decodeIfPresent([String: TransitionNodeSettings].self, forKey: .transitionNodeSettings) ?? [:]
             trailNodeSettings = try container.decodeIfPresent([String: TrailNodeSettings].self, forKey: .trailNodeSettings) ?? [:]
@@ -30661,6 +33684,28 @@ final class GraphStore: ObservableObject {
                 kind = "midiOut"
             case .midiCC:
                 kind = "midiCC"
+            case .midiCCInput:
+                kind = "midiCCInput"
+            case .midiNoteInput:
+                kind = "midiNoteInput"
+            case .oscInput:
+                kind = "oscInput"
+            case .oscOutput:
+                kind = "oscOutput"
+            case .oscReceive:
+                kind = "oscReceive"
+            case .oscSend:
+                kind = "oscSend"
+            case .oscGet4:
+                kind = "oscGet4"
+            case .oscGetArray:
+                kind = "oscGetArray"
+            case .oscMake4:
+                kind = "oscMake4"
+            case .oscMakeArray:
+                kind = "oscMakeArray"
+            case .oscBundle:
+                kind = "oscBundle"
             case .note:
                 kind = "note"
             case .transform:
@@ -30683,6 +33728,8 @@ final class GraphStore: ObservableObject {
                 kind = "scene3DText"
             case .scene3DModel:
                 kind = "scene3DModel"
+            case .scene3DGaussianSplat:
+                kind = "scene3DGaussianSplat"
             case .scene3DParticle:
                 kind = "scene3DParticle"
             case .select:
@@ -30731,6 +33778,8 @@ final class GraphStore: ObservableObject {
                 kind = "interpolator"
             case .hold:
                 kind = "hold"
+            case .scalarSmooth:
+                kind = "scalarSmooth"
             case .trail:
                 kind = "trail"
             case .monitor:
@@ -31512,6 +34561,7 @@ private struct VideoPlayerControlState {
     let play: Double
     let rate: Double
     let seek: Double?
+    let volume: Double
 }
 
 @MainActor
@@ -31656,6 +34706,8 @@ private final class VideoPlayerController: NSObject {
         let settings = store.settings(forVideoPlayerNodeID: nodeID)
         let control = store.videoPlayerControlState(for: nodeID)
         let hasConsumer = store.nodeHasRenderableConsumer(nodeID)
+        player.volume = Float(control.volume)
+        player.isMuted = control.volume <= 0.0001
 
         if let seek = control.seek, seek != lastAppliedSeek {
             self.seek(toNormalizedTime: seek)

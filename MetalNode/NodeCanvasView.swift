@@ -1016,6 +1016,51 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:midiCCInput" {
+            store.addMIDIInputCCNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:midiNoteInput" {
+            store.addMIDIInputNoteNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscReceive" {
+            store.addOSCReceiveNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscSend" {
+            store.addOSCSendNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscGet4" {
+            store.addOSCGet4Node(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscGetArray" {
+            store.addOSCGetArrayNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscMake4" {
+            store.addOSCMake4Node(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscMakeArray" {
+            store.addOSCMakeArrayNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:oscBundle" {
+            store.addOSCBundleNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:note" {
             store.addNoteNode(at: dropPoint)
             return finalizeDrop()
@@ -1153,6 +1198,11 @@ struct NodeCanvasView: View {
 
         if item == "core:hold" {
             store.addHoldNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scalarSmooth" {
+            store.addScalarSmoothNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -1361,8 +1411,23 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:scene3DGaussianSplat" {
+            store.addScene3DGaussianSplatNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:scene3DParticle" {
             store.addScene3DParticleNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DFishSchool" {
+            store.addScene3DFishSchoolNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:scene3DDustHaze" {
+            store.addScene3DDustHazeNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -2592,7 +2657,7 @@ private struct NodeCardView: View {
             Spacer()
 
             switch node.kind {
-            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .scale, .interpolator, .hold, .trail, .monitor, .layers:
+            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .layers:
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
@@ -2646,7 +2711,8 @@ private struct NodeCardView: View {
     private var portRows: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(portLabels.enumerated()), id: \.offset) { index, row in
-                let inputPort = node.inputPorts.indices.contains(index) ? node.inputPorts[index] : nil
+                let visibleInputs = visibleInputPorts
+                let inputPort = visibleInputs.indices.contains(index) ? visibleInputs[index] : nil
                 let outputPort = node.outputPorts.indices.contains(index) ? node.outputPorts[index] : nil
                 HStack {
                     inputLabel(for: inputPort, fallbackName: row.input)
@@ -3322,6 +3388,28 @@ private struct NodeCardView: View {
             return "Point-to-note mapper"
         case .midiCC:
             return "Scalar to CC mapper"
+        case .midiCCInput:
+            return "Incoming controller value"
+        case .midiNoteInput:
+            return "Incoming note gate"
+        case .oscInput:
+            return "Incoming OSC message"
+        case .oscOutput:
+            return "Outgoing OSC sender"
+        case .oscReceive:
+            return "OSC packet receiver"
+        case .oscSend:
+            return "OSC packet sender"
+        case .oscGet4:
+            return "Unpack four OSC values"
+        case .oscGetArray:
+            return "Unpack OSC float array"
+        case .oscMake4:
+            return "Build one OSC message"
+        case .oscMakeArray:
+            return "Build OSC float array"
+        case .oscBundle:
+            return "Bundle OSC messages"
         case .note:
             return "Graph note + overlay"
         case .transform:
@@ -3344,6 +3432,8 @@ private struct NodeCardView: View {
             return "SceneKit 3D text source"
         case .scene3DModel:
             return "SceneKit model file source"
+        case .scene3DGaussianSplat:
+            return "PLY Gaussian splat viewer"
         case .scene3DParticle:
             return "SceneKit particle emitter"
         case .select:
@@ -3392,6 +3482,8 @@ private struct NodeCardView: View {
             return "Looping value"
         case .hold:
             return "Hold last sample"
+        case .scalarSmooth:
+            return "Smooth scalar follower"
         case .trail:
             return "Rainbow trail"
         case .layers:
@@ -3575,6 +3667,28 @@ private struct NodeCardView: View {
             return .orange
         case .midiCC:
             return .orange
+        case .midiCCInput:
+            return .orange
+        case .midiNoteInput:
+            return .orange
+        case .oscInput:
+            return .orange
+        case .oscOutput:
+            return .orange
+        case .oscReceive:
+            return .orange
+        case .oscSend:
+            return .orange
+        case .oscGet4:
+            return .orange
+        case .oscGetArray:
+            return .orange
+        case .oscMake4:
+            return .orange
+        case .oscMakeArray:
+            return .orange
+        case .oscBundle:
+            return .orange
         case .note:
             return .yellow
         case .transform:
@@ -3597,6 +3711,8 @@ private struct NodeCardView: View {
             return .blue
         case .scene3DModel:
             return .blue
+        case .scene3DGaussianSplat:
+            return .purple
         case .scene3DParticle:
             return .blue
         case .select:
@@ -3645,6 +3761,8 @@ private struct NodeCardView: View {
             return .blue
         case .hold:
             return .indigo
+        case .scalarSmooth:
+            return .mint
         case .trail:
             return .purple
         case .layers:
@@ -3809,6 +3927,24 @@ struct NodeInspectorControls: View {
                 MIDIOutNodeEditor(store: store, nodeID: node.id)
             } else if case .midiCC = node.kind {
                 MIDICCNodeEditor(store: store, nodeID: node.id)
+            } else if case .midiCCInput = node.kind {
+                MIDIInputCCNodeEditor(store: store, nodeID: node.id)
+            } else if case .midiNoteInput = node.kind {
+                MIDIInputNoteNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscInput = node.kind {
+                OSCInputNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscOutput = node.kind {
+                OSCOutputNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscReceive = node.kind {
+                OSCInputNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscSend = node.kind {
+                OSCSendNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscMake4 = node.kind {
+                OSCMessageNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscMakeArray = node.kind {
+                OSCArrayMessageNodeEditor(store: store, nodeID: node.id)
+            } else if case .oscBundle = node.kind {
+                OSCBundleNodeEditor(store: store, nodeID: node.id)
             } else if case .note = node.kind {
                 NoteNodeEditor(store: store, nodeID: node.id)
             } else if case .transform = node.kind {
@@ -3831,6 +3967,8 @@ struct NodeInspectorControls: View {
                 Scene3DTextNodeEditor(store: store, nodeID: node.id)
             } else if case .scene3DModel = node.kind {
                 Scene3DModelNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DGaussianSplat = node.kind {
+                Scene3DGaussianSplatNodeEditor(store: store, nodeID: node.id)
             } else if case .scene3DParticle = node.kind {
                 Scene3DParticleNodeEditor(store: store, nodeID: node.id)
             } else if case .select = node.kind {
@@ -3883,6 +4021,8 @@ struct NodeInspectorControls: View {
                 Point4ScaleNodeEditor(store: store, nodeID: node.id)
             } else if case .hold = node.kind {
                 HoldNodeEditor(store: store, nodeID: node.id)
+            } else if case .scalarSmooth = node.kind {
+                ScalarSmoothNodeEditor(store: store, nodeID: node.id)
             } else if case .trail = node.kind {
                 TrailNodeEditor(store: store, nodeID: node.id)
             } else if case .layers = node.kind {
@@ -3979,6 +4119,7 @@ private struct RenderNodePreview: View {
 
             MetalPreviewView(
                 configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
+                isRunning: store.isGraphRunning,
                 onMouseChange: store.updateMousePosition,
                 onMouseButtonChange: store.updateMouseButtons,
                 onModifierFlagsChange: store.updatePreviewModifierFlags,
@@ -4016,6 +4157,7 @@ private struct CompactRenderNodePreview: View {
 
             MetalPreviewView(
                 configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
+                isRunning: store.isGraphRunning,
                 onMouseChange: store.updateMousePosition,
                 onMouseButtonChange: store.updateMouseButtons,
                 onModifierFlagsChange: store.updatePreviewModifierFlags,
@@ -5577,6 +5719,8 @@ private struct MathNodeEditor: View {
 private struct ExpressionNodeEditor: View {
     @ObservedObject var store: GraphStore
     let nodeID: GraphNode.ID
+    @State private var expressionDraft = ""
+    @State private var draftNodeID: GraphNode.ID?
 
     var body: some View {
         let settings = store.settings(forExpressionNodeID: nodeID)
@@ -5594,8 +5738,10 @@ private struct ExpressionNodeEditor: View {
 
                 TextEditor(
                     text: Binding(
-                        get: { settings.expression },
+                        get: { expressionDraft },
                         set: { newValue in
+                            expressionDraft = newValue
+                            draftNodeID = nodeID
                             store.updateExpressionNodeSettings(nodeID) { $0.expression = newValue }
                         }
                     )
@@ -5612,6 +5758,23 @@ private struct ExpressionNodeEditor: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
+            }
+            .onAppear {
+                if draftNodeID != nodeID {
+                    expressionDraft = settings.expression
+                    draftNodeID = nodeID
+                }
+            }
+            .onChange(of: nodeID) { _, newNodeID in
+                let newSettings = store.settings(forExpressionNodeID: newNodeID)
+                expressionDraft = newSettings.expression
+                draftNodeID = newNodeID
+            }
+            .onChange(of: settings.expression) { _, newValue in
+                guard draftNodeID == nodeID else { return }
+                if expressionDraft != newValue {
+                    expressionDraft = newValue
+                }
             }
 
             Text("Functions: sin cos tan abs sqrt min max clamp floor ceil round pow. Constants: pi, tau. Center is usually 0.5, 0.5.")
@@ -7297,6 +7460,292 @@ private struct MIDICCNodeEditor: View {
     }
 }
 
+private struct MIDIInputCCNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forMIDIInputCCNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Stepper(
+                    "CC \(settings.ccNumber)",
+                    value: Binding(
+                        get: { settings.ccNumber },
+                        set: { newValue in
+                            store.updateMIDIInputCCNodeSettings(nodeID) { $0.ccNumber = newValue }
+                        }
+                    ),
+                    in: 0...127
+                )
+                Stepper(
+                    "Ch \(settings.channel + 1)",
+                    value: Binding(
+                        get: { settings.channel },
+                        set: { newValue in
+                            store.updateMIDIInputCCNodeSettings(nodeID) { $0.channel = newValue }
+                        }
+                    ),
+                    in: 0...15
+                )
+                .disabled(settings.listenToAllChannels)
+            }
+            .font(.caption2)
+
+            Toggle("All Channels", isOn: Binding(
+                get: { settings.listenToAllChannels },
+                set: { newValue in
+                    store.updateMIDIInputCCNodeSettings(nodeID) { $0.listenToAllChannels = newValue }
+                }
+            ))
+            .font(.caption)
+        }
+    }
+}
+
+private struct MIDIInputNoteNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forMIDIInputNoteNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Stepper(
+                    "Note \(settings.noteNumber)",
+                    value: Binding(
+                        get: { settings.noteNumber },
+                        set: { newValue in
+                            store.updateMIDIInputNoteNodeSettings(nodeID) { $0.noteNumber = newValue }
+                        }
+                    ),
+                    in: 0...127
+                )
+                .disabled(settings.listenToAllNotes)
+
+                Stepper(
+                    "Ch \(settings.channel + 1)",
+                    value: Binding(
+                        get: { settings.channel },
+                        set: { newValue in
+                            store.updateMIDIInputNoteNodeSettings(nodeID) { $0.channel = newValue }
+                        }
+                    ),
+                    in: 0...15
+                )
+                .disabled(settings.listenToAllChannels)
+            }
+            .font(.caption2)
+
+            Toggle("All Notes", isOn: Binding(
+                get: { settings.listenToAllNotes },
+                set: { newValue in
+                    store.updateMIDIInputNoteNodeSettings(nodeID) { $0.listenToAllNotes = newValue }
+                }
+            ))
+            .font(.caption)
+
+            Toggle("All Channels", isOn: Binding(
+                get: { settings.listenToAllChannels },
+                set: { newValue in
+                    store.updateMIDIInputNoteNodeSettings(nodeID) { $0.listenToAllChannels = newValue }
+                }
+            ))
+            .font(.caption)
+        }
+    }
+}
+
+private struct OSCInputNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCInputNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            NumericField(
+                title: "Port",
+                value: Double(settings.port),
+                onSubmit: { newValue in
+                    store.updateOSCInputNodeSettings(nodeID) { $0.port = Int(newValue.rounded()) }
+                }
+            )
+
+            TextField(
+                "Address filter",
+                text: Binding(
+                    get: { settings.address },
+                    set: { newValue in
+                        store.updateOSCInputNodeSettings(nodeID) { $0.address = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Leave address blank to accept any message on the port.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.68))
+        }
+    }
+}
+
+private struct OSCOutputNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCOutputNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                "Host",
+                text: Binding(
+                    get: { settings.host },
+                    set: { newValue in
+                        store.updateOSCOutputNodeSettings(nodeID) { $0.host = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            NumericField(
+                title: "Port",
+                value: Double(settings.port),
+                onSubmit: { newValue in
+                    store.updateOSCOutputNodeSettings(nodeID) { $0.port = Int(newValue.rounded()) }
+                }
+            )
+
+            TextField(
+                "Address",
+                text: Binding(
+                    get: { settings.address },
+                    set: { newValue in
+                        store.updateOSCOutputNodeSettings(nodeID) { $0.address = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Wire up Float/Int/Text ports in slot order to send mixed OSC arguments on one address.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct OSCSendNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCSendNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                "Host",
+                text: Binding(
+                    get: { settings.host },
+                    set: { newValue in
+                        store.updateOSCSendNodeSettings(nodeID) { $0.host = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            NumericField(
+                title: "Port",
+                value: Double(settings.port),
+                onSubmit: { newValue in
+                    store.updateOSCSendNodeSettings(nodeID) { $0.port = Int(newValue.rounded()) }
+                }
+            )
+        }
+    }
+}
+
+private struct OSCMessageNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCMessageNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                "Address",
+                text: Binding(
+                    get: { settings.address },
+                    set: { newValue in
+                        store.updateOSCMessageNodeSettings(nodeID) { $0.address = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Slot order stays Text, then Int, then Float for each value index.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct OSCArrayMessageNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCMessageNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(
+                "Address",
+                text: Binding(
+                    get: { settings.address },
+                    set: { newValue in
+                        store.updateOSCMessageNodeSettings(nodeID) { $0.address = newValue }
+                    }
+                )
+            )
+            .textFieldStyle(.roundedBorder)
+
+            Text("Sends every value from the connected scalar array as one OSC float-array message.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+private struct OSCBundleNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forOSCBundleNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            NumericField(
+                title: "Packet Count",
+                value: Double(settings.packetCount),
+                onSubmit: { newValue in
+                    store.updateOSCBundleNodeSettings(nodeID) { $0.packetCount = Int(newValue.rounded()) }
+                }
+            )
+
+            Text("Increase packet count when you want to bundle more OSC messages before sending.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 private struct ImageNodeReadout: View {
     @ObservedObject var store: GraphStore
     let nodeID: GraphNode.ID
@@ -7610,6 +8059,17 @@ private struct VideoPlayerNodeEditor: View {
                     get: { settings.seekPosition },
                     set: { newValue in
                         store.updateVideoPlayerNodeSettings(nodeID) { $0.seekPosition = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Volume",
+                value: Binding(
+                    get: { settings.volume },
+                    set: { newValue in
+                        store.updateVideoPlayerNodeSettings(nodeID) { $0.volume = newValue }
                     }
                 ),
                 range: 0...1
@@ -8143,7 +8603,7 @@ private struct ScaleNodeEditor: View {
                         store.updateScaleNodeSettings(nodeID) { $0.scaledMax = newValue }
                     }
                 ),
-                range: -20...20
+                range: -720...720
             )
             Text("scaledMin + (value - min) * (scaledMax - scaledMin) / (max - min)")
                 .font(.caption2)
@@ -8168,7 +8628,7 @@ private struct InterpolatorNodeEditor: View {
                         store.updateInterpolatorNodeSettings(nodeID) { $0.start = newValue }
                     }
                 ),
-                range: -20...20
+                range: -720...720
             )
             LabeledSlider(
                 title: "End",
@@ -8178,7 +8638,7 @@ private struct InterpolatorNodeEditor: View {
                         store.updateInterpolatorNodeSettings(nodeID) { $0.end = newValue }
                     }
                 ),
-                range: -20...20
+                range: -720...720
             )
             LabeledSlider(
                 title: "Duration",
@@ -8188,7 +8648,8 @@ private struct InterpolatorNodeEditor: View {
                         store.updateInterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) }
                     }
                 ),
-                range: 0.05...20
+                range: 0.05...120,
+                clampsToRange: false
             )
             LabeledSlider(
                 title: "Phase",
@@ -8241,7 +8702,7 @@ private struct PointInterpolatorNodeEditor: View {
             LabeledSlider(title: "Start Y", value: Binding(get: { settings.startY }, set: { newValue in store.updatePointInterpolatorNodeSettings(nodeID) { $0.startY = newValue } }), range: -2...2)
             LabeledSlider(title: "End X", value: Binding(get: { settings.endX }, set: { newValue in store.updatePointInterpolatorNodeSettings(nodeID) { $0.endX = newValue } }), range: -2...2)
             LabeledSlider(title: "End Y", value: Binding(get: { settings.endY }, set: { newValue in store.updatePointInterpolatorNodeSettings(nodeID) { $0.endY = newValue } }), range: -2...2)
-            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePointInterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...20)
+            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePointInterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...120, clampsToRange: false)
         }
     }
 }
@@ -8258,7 +8719,7 @@ private struct Point3InterpolatorNodeEditor: View {
             LabeledSlider(title: "End X", value: Binding(get: { settings.end.x }, set: { newValue in store.updatePoint3InterpolatorNodeSettings(nodeID) { $0.end.x = newValue } }), range: -2...2)
             LabeledSlider(title: "End Y", value: Binding(get: { settings.end.y }, set: { newValue in store.updatePoint3InterpolatorNodeSettings(nodeID) { $0.end.y = newValue } }), range: -2...2)
             LabeledSlider(title: "End Z", value: Binding(get: { settings.end.z }, set: { newValue in store.updatePoint3InterpolatorNodeSettings(nodeID) { $0.end.z = newValue } }), range: -2...2)
-            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePoint3InterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...20)
+            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePoint3InterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...120, clampsToRange: false)
         }
     }
 }
@@ -8277,7 +8738,7 @@ private struct Point4InterpolatorNodeEditor: View {
             LabeledSlider(title: "End Y", value: Binding(get: { settings.end.y }, set: { newValue in store.updatePoint4InterpolatorNodeSettings(nodeID) { $0.end.y = newValue } }), range: -2...2)
             LabeledSlider(title: "End Z", value: Binding(get: { settings.end.z }, set: { newValue in store.updatePoint4InterpolatorNodeSettings(nodeID) { $0.end.z = newValue } }), range: -2...2)
             LabeledSlider(title: "End W", value: Binding(get: { settings.end.w }, set: { newValue in store.updatePoint4InterpolatorNodeSettings(nodeID) { $0.end.w = newValue } }), range: -2...2)
-            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePoint4InterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...20)
+            LabeledSlider(title: "Duration", value: Binding(get: { settings.duration }, set: { newValue in store.updatePoint4InterpolatorNodeSettings(nodeID) { $0.duration = max(0.05, newValue) } }), range: 0.05...120, clampsToRange: false)
         }
     }
 }
@@ -8359,6 +8820,73 @@ private struct HoldNodeEditor: View {
                     .foregroundStyle(.white.opacity(0.7))
                 Spacer()
                 Text(String(format: "%.3f", heldValue))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+        }
+    }
+}
+
+private struct ScalarSmoothNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forScalarSmoothNodeID: nodeID)
+        let value = store.scalarOutputValue(forNodeID: nodeID, outputName: "Value") ?? settings.initialValue
+
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Mode", selection: Binding(
+                get: { settings.mode },
+                set: { newValue in
+                    store.updateScalarSmoothNodeSettings(nodeID) { $0.mode = newValue }
+                }
+            )) {
+                ForEach(ScalarSmoothMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            LabeledSlider(
+                title: "Amount",
+                value: Binding(
+                    get: { settings.amount },
+                    set: { newValue in
+                        store.updateScalarSmoothNodeSettings(nodeID) { $0.amount = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Inertia",
+                value: Binding(
+                    get: { settings.inertia },
+                    set: { newValue in
+                        store.updateScalarSmoothNodeSettings(nodeID) { $0.inertia = newValue }
+                    }
+                ),
+                range: 0...0.99
+            )
+
+            LabeledSlider(
+                title: "Initial",
+                value: Binding(
+                    get: { settings.initialValue },
+                    set: { newValue in
+                        store.updateScalarSmoothNodeSettings(nodeID) { $0.initialValue = newValue }
+                    }
+                ),
+                range: -200...200
+            )
+
+            HStack {
+                Text("Value")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.7))
+                Spacer()
+                Text(String(format: "%.3f", value))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.85))
             }
@@ -9609,7 +10137,7 @@ private struct Scene3DRenderNodeEditor: View {
                 set: { newValue in
                     store.updateScene3DRenderNodeSettings(nodeID) { $0.cameraDistance = newValue }
                 }
-            ), range: 0.1...30)
+            ), range: -200...200)
 
             LabeledSlider(title: "Orbit", value: Binding(
                 get: { settings.cameraOrbit },
@@ -9652,6 +10180,27 @@ private struct Scene3DRenderNodeEditor: View {
                     store.updateScene3DRenderNodeSettings(nodeID) { $0.defaultLightIntensity = newValue }
                 }
             ), range: 0...2000)
+
+            LabeledSlider(title: "Water Distortion", value: Binding(
+                get: { settings.waterDistortion },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.waterDistortion = newValue }
+                }
+            ), range: 0...0.12)
+
+            LabeledSlider(title: "Water Scale", value: Binding(
+                get: { settings.waterScale },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.waterScale = newValue }
+                }
+            ), range: 0.25...12)
+
+            LabeledSlider(title: "Water Speed", value: Binding(
+                get: { settings.waterSpeed },
+                set: { newValue in
+                    store.updateScene3DRenderNodeSettings(nodeID) { $0.waterSpeed = newValue }
+                }
+            ), range: 0...4)
         }
     }
 }
@@ -10033,7 +10582,7 @@ private struct Scene3DParticleNodeEditor: View {
     let nodeID: GraphNode.ID
 
     var body: some View {
-        let settings = store.resolvedScene3DParticleSettings(forNodeID: nodeID)
+        let settings = store.settings(forScene3DParticleNodeID: nodeID)
 
         VStack(alignment: .leading, spacing: 8) {
             Picker("Emitter", selection: Binding(
@@ -10060,6 +10609,18 @@ private struct Scene3DParticleNodeEditor: View {
             }
             .pickerStyle(.segmented)
 
+            Picker("Sprite", selection: Binding(
+                get: { settings.spriteStyle },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteStyle = newValue }
+                }
+            )) {
+                ForEach(Scene3DParticleSpriteStyle.allCases) { spriteStyle in
+                    Text(spriteStyle.label).tag(spriteStyle)
+                }
+            }
+            .pickerStyle(.segmented)
+
             LabeledSlider(title: "Pos X", value: Binding(get: { settings.positionX }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionX = newValue } }), range: -50...50)
             LabeledSlider(title: "Pos Y", value: Binding(get: { settings.positionY }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionY = newValue } }), range: -50...50)
             LabeledSlider(title: "Pos Z", value: Binding(get: { settings.positionZ }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.positionZ = newValue } }), range: -50...50)
@@ -10069,8 +10630,40 @@ private struct Scene3DParticleNodeEditor: View {
             LabeledSlider(title: "Lifetime", value: Binding(get: { settings.lifetime }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.lifetime = newValue } }), range: 0.05...20)
             LabeledSlider(title: "Speed", value: Binding(get: { settings.speed }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.speed = newValue } }), range: 0...20)
             LabeledSlider(title: "Spread", value: Binding(get: { settings.spread }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spread = newValue } }), range: 0...180)
-            LabeledSlider(title: "Size", value: Binding(get: { settings.size }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.size = newValue } }), range: 0.001...1)
+            LabeledSlider(title: "Box Width", value: Binding(get: { settings.boxWidth }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.boxWidth = newValue } }), range: 0.01...120)
+            LabeledSlider(title: "Box Height", value: Binding(get: { settings.boxHeight }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.boxHeight = newValue } }), range: 0.01...80)
+            LabeledSlider(title: "Box Depth", value: Binding(get: { settings.boxDepth }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.boxDepth = newValue } }), range: 0.01...120)
+            LabeledSlider(title: "Size", value: Binding(get: { settings.size }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.size = newValue } }), range: 0.001...20)
             LabeledSlider(title: "Gravity Y", value: Binding(get: { settings.gravityY }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.gravityY = newValue } }), range: -20...20)
+            LabeledSlider(title: "Sheet Columns", value: Binding(get: { settings.spriteSheetColumns }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteSheetColumns = newValue } }), range: 1...16)
+            LabeledSlider(title: "Sheet Rows", value: Binding(get: { settings.spriteSheetRows }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteSheetRows = newValue } }), range: 1...16)
+            LabeledSlider(title: "Sheet Count", value: Binding(get: { settings.spriteSheetCount }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteSheetCount = newValue } }), range: 1...256)
+            LabeledSlider(title: "Sprite Wobble", value: Binding(get: { settings.spriteWobble }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteWobble = newValue } }), range: 0...1)
+            LabeledSlider(title: "Wobble Speed", value: Binding(get: { settings.spriteWobbleSpeed }, set: { newValue in store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteWobbleSpeed = newValue } }), range: 0...10)
+
+            Toggle("Flip Sprite X", isOn: Binding(
+                get: { settings.spriteFlipX },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteFlipX = newValue }
+                }
+            ))
+            .font(.caption.weight(.semibold))
+
+            Toggle("Flip Sprite Y", isOn: Binding(
+                get: { settings.spriteFlipY },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteFlipY = newValue }
+                }
+            ))
+            .font(.caption.weight(.semibold))
+
+            Toggle("Random Sprite", isOn: Binding(
+                get: { settings.spriteSheetRandom },
+                set: { newValue in
+                    store.updateScene3DParticleNodeSettings(nodeID) { $0.spriteSheetRandom = newValue }
+                }
+            ))
+            .font(.caption.weight(.semibold))
 
             ColorPicker(
                 "Color",
@@ -10091,6 +10684,100 @@ private struct Scene3DParticleNodeEditor: View {
                 supportsOpacity: true
             )
             .font(.caption.weight(.semibold))
+        }
+    }
+}
+
+private struct Scene3DGaussianSplatNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.resolvedScene3DGaussianSplatSettings(forNodeID: nodeID)
+        let loading = (store.scalarOutputValue(forNodeID: nodeID, outputName: "Loading") ?? 0.0) >= 0.5
+        let progress = store.scalarOutputValue(forNodeID: nodeID, outputName: "Progress") ?? 0.0
+        let status = store.stringOutputValue(forNodeID: nodeID, outputName: "Status") ?? "Idle"
+
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                store.openScene3DGaussianSplatPicker(for: nodeID)
+            } label: {
+                Text(settings.bookmarkData.isEmpty ? "Choose PLY..." : "Replace PLY...")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.borderedProminent)
+
+            Button {
+                store.openScene3DGaussianSplatPanoramaPicker(for: nodeID)
+            } label: {
+                Text(settings.panoramaImageData.isEmpty ? "Choose Panorama..." : "Replace Panorama...")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                store.openScene3DGaussianSplatDepthMapPicker(for: nodeID)
+            } label: {
+                Text(settings.panoramaDepthImageData.isEmpty ? "Choose Depth Map..." : "Replace Depth Map...")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+
+            Text(settings.filename)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .textSelection(.enabled)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(status)
+                    Spacer()
+                    Text("\(Int((progress * 100.0).rounded()))%")
+                        .monospacedDigit()
+                }
+                .font(.caption2)
+                .foregroundStyle(loading ? .white.opacity(0.85) : .white.opacity(0.6))
+
+                ProgressView(value: progress)
+                    .opacity(loading || progress > 0 ? 1.0 : 0.35)
+            }
+
+            LabeledSlider(title: "Pos X", value: Binding(get: { settings.positionX }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.positionX = newValue } }), range: -50...50)
+            LabeledSlider(title: "Pos Y", value: Binding(get: { settings.positionY }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.positionY = newValue } }), range: -50...50)
+            LabeledSlider(title: "Pos Z", value: Binding(get: { settings.positionZ }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.positionZ = newValue } }), range: -50...50)
+            LabeledSlider(title: "Rot X", value: Binding(get: { settings.rotationX }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.rotationX = newValue } }), range: -720...720)
+            LabeledSlider(title: "Rot Y", value: Binding(get: { settings.rotationY }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.rotationY = newValue } }), range: -720...720)
+            LabeledSlider(title: "Rot Z", value: Binding(get: { settings.rotationZ }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.rotationZ = newValue } }), range: -720...720)
+            LabeledSlider(title: "Scale", value: Binding(get: { settings.scale }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.scale = newValue } }), range: 0.001...100)
+            LabeledSlider(title: "Distance", value: Binding(get: { settings.cameraDistance }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.cameraDistance = newValue } }), range: -200...200)
+            LabeledSlider(title: "Orbit", value: Binding(get: { settings.cameraOrbit }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.cameraOrbit = newValue } }), range: -360...360)
+            LabeledSlider(title: "Pitch", value: Binding(get: { settings.cameraPitch }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.cameraPitch = newValue } }), range: -89...89)
+            LabeledSlider(title: "Pan X", value: Binding(get: { settings.cameraPanX }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.cameraPanX = newValue } }), range: -50...50)
+            LabeledSlider(title: "Pan Y", value: Binding(get: { settings.cameraPanY }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.cameraPanY = newValue } }), range: -50...50)
+            LabeledSlider(title: "Point Size", value: Binding(get: { settings.pointSize }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.pointSize = newValue } }), range: 0.1...24)
+            LabeledSlider(title: "Opacity", value: Binding(get: { settings.opacity }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.opacity = newValue } }), range: 0...1)
+            LabeledSlider(title: "Explode", value: Binding(get: { settings.explode }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.explode = newValue } }), range: 0...100)
+            LabeledSlider(title: "Chaos", value: Binding(get: { settings.chaos }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.chaos = newValue } }), range: 0...1)
+            LabeledSlider(title: "Particle Speed", value: Binding(get: { settings.particleSpeed }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.particleSpeed = newValue } }), range: 0...10)
+            LabeledSlider(title: "Particle Gravity", value: Binding(get: { settings.particleGravity }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.particleGravity = newValue } }), range: -10...10)
+            LabeledSlider(title: "Particle Turbulence", value: Binding(get: { settings.particleTurbulence }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.particleTurbulence = newValue } }), range: 0...10)
+            LabeledSlider(title: "Particle Boundary", value: Binding(get: { settings.particleBoundary }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.particleBoundary = newValue } }), range: 0.1...500)
+            LabeledSlider(title: "Max Splats", value: Binding(get: { settings.maxSplats }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.maxSplats = newValue } }), range: 1_000...2_000_000)
+            LabeledSlider(title: "Pano Radius", value: Binding(get: { settings.panoramaRadius }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.panoramaRadius = newValue } }), range: 0.01...50)
+            LabeledSlider(title: "Pano Depth", value: Binding(get: { settings.panoramaDepthScale }, set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.panoramaDepthScale = newValue } }), range: 0...10)
+
+            Toggle("Auto Center", isOn: Binding(
+                get: { settings.autoCenter },
+                set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.autoCenter = newValue } }
+            ))
+            .font(.caption)
+
+            Toggle("Auto Scale", isOn: Binding(
+                get: { settings.autoScale },
+                set: { newValue in store.updateScene3DGaussianSplatNodeSettings(nodeID) { $0.autoScale = newValue } }
+            ))
+            .font(.caption)
         }
     }
 }

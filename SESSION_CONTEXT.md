@@ -1,7 +1,7 @@
 # MetalNode Session Context
 
 ## Project Identity
-- Workspace path: `/Users/dustinoconnor/Desktop/MetalNode`
+- Workspace path: local checkout of the `MetalNode` repository.
 - Xcode project/target name: `MetalNode`
 - App display/product name: `Metal Composer`
 - Bundle identifier: `com.dust.MetalNode`

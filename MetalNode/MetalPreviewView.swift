@@ -7,7 +7,10 @@
 
 import Metal
 import MetalKit
+import CoreGraphics
 import CoreVideo
+import Foundation
+import ImageIO
 import QuartzCore
 import SceneKit
 import SwiftUI
@@ -15,6 +18,8 @@ import simd
 
 struct MetalPreviewView: NSViewRepresentable {
     let configuration: PreviewRenderConfiguration
+    let isRunning: Bool
+    var videoRecorder: PreviewVideoRecorder? = nil
     var onMouseChange: ((CGPoint?) -> Void)? = nil
     var onMouseButtonChange: ((Bool, Bool) -> Void)? = nil
     var onModifierFlagsChange: ((NSEvent.ModifierFlags) -> Void)? = nil
@@ -28,7 +33,7 @@ struct MetalPreviewView: NSViewRepresentable {
     private static let maxBoolUniforms = 16
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(configuration: configuration)
+        Coordinator(configuration: configuration, isRunning: isRunning, videoRecorder: videoRecorder)
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -56,7 +61,7 @@ struct MetalPreviewView: NSViewRepresentable {
             trackingView.onModifierFlagsChange = onModifierFlagsChange
             trackingView.onScrollChange = onScrollChange
         }
-        context.coordinator.update(configuration: configuration, view: nsView)
+        context.coordinator.update(configuration: configuration, isRunning: isRunning, videoRecorder: videoRecorder, view: nsView)
     }
 
     final class Coordinator: NSObject, MTKViewDelegate {
@@ -68,12 +73,51 @@ struct MetalPreviewView: NSViewRepresentable {
             let displacement: MTLTexture?
         }
 
+        private struct GaussianSplatVertexGPU {
+            var position: SIMD4<Float>
+            var color: SIMD4<Float>
+            var scale: SIMD4<Float>
+            var rotation: SIMD4<Float>
+        }
+
+        private struct GaussianSplatUniformsGPU {
+            var resolution: SIMD2<Float>
+            var position: SIMD3<Float>
+            var scale: Float
+            var rotationRadians: SIMD3<Float>
+            var cameraDistance: Float
+            var cameraOrbitRadians: Float
+            var cameraPitchRadians: Float
+            var cameraPan: SIMD2<Float>
+            var pointSize: Float
+            var opacity: Float
+            var explode: Float
+            var chaos: Float
+            var particleSpeed: Float
+            var particleGravity: Float
+            var particleTurbulence: Float
+            var particleBoundary: Float
+            var time: Float
+            var isPanorama: Float
+        }
+
+        private struct GaussianSplatBufferCache {
+            var assetSignature: String
+            var sortSignature: String
+            var vertices: [GaussianSplatVertexGPU]
+            var buffer: MTLBuffer
+            var count: Int
+        }
+
         private let device: MTLDevice?
         private let commandQueue: MTLCommandQueue?
         private let samplerState: MTLSamplerState?
         private weak var view: MTKView?
         private var redrawTimer: Timer?
         private var startTime = CACurrentMediaTime()
+        private var liveIsRunning: Bool
+        private var frozenRenderTime: Float = 0
+        private weak var liveVideoRecorder: PreviewVideoRecorder?
 
         private var liveConfiguration: PreviewRenderConfiguration
         private var compiledSignature = ""
@@ -90,11 +134,13 @@ struct MetalPreviewView: NSViewRepresentable {
         private var videoPipelineState: MTLRenderPipelineState?
         private var underwaterPipelineState: MTLRenderPipelineState?
         private var coreImageEffectPipelineState: MTLRenderPipelineState?
+        private var gaussianSplatPipelineState: MTLRenderPipelineState?
         private var trailHistory: [TrailHistoryPoint] = []
         private var lastTrailAppendTime: Float = 0
         private var feedbackHistoryTextures: [UUID: MTLTexture] = [:]
         private var renderTexturePool: [String: [MTLTexture]] = [:]
         private var renderTexturePoolIndices: [String: Int] = [:]
+        private var frameScene3DRenderTextures: [String: MTLTexture] = [:]
         private var imageTextures: [UUID: (fingerprint: Int, texture: MTLTexture)] = [:]
         private var videoTextureCache: CVMetalTextureCache?
         private var sceneRenderers: [UUID: SCNRenderer] = [:]
@@ -102,16 +148,22 @@ struct MetalPreviewView: NSViewRepresentable {
         private var modelSceneAssetSignatures: [UUID: Int] = [:]
         private var particleScenes: [UUID: SCNScene] = [:]
         private var particleSceneSignatures: [UUID: String] = [:]
+        private var sceneParticleNodes: [UUID: (signature: String, node: SCNNode)] = [:]
         private var scene3DRenderScenes: [UUID: SCNScene] = [:]
         private var scene3DRenderSceneSignatures: [UUID: String] = [:]
+        private static var gaussianSplatBuffers: [UUID: GaussianSplatBufferCache] = [:]
+        private static var gaussianSplatLoadJobs: [UUID: String] = [:]
         private var animationPlayerBaseDurations: [ObjectIdentifier: TimeInterval] = [:]
         private var fallbackAnimationBaseDurations: [ObjectIdentifier: TimeInterval] = [:]
         private var loggedModelLoadFailures: Set<String> = []
+        private var loggedShaderCompileFailures: Set<Int> = []
 
-        init(configuration: PreviewRenderConfiguration) {
+        init(configuration: PreviewRenderConfiguration, isRunning: Bool, videoRecorder: PreviewVideoRecorder?) {
             device = MTLCreateSystemDefaultDevice()
             commandQueue = device?.makeCommandQueue()
             liveConfiguration = configuration
+            liveIsRunning = isRunning
+            liveVideoRecorder = videoRecorder
             if let device {
                 let descriptor = MTLSamplerDescriptor()
                 descriptor.minFilter = .linear
@@ -132,9 +184,18 @@ struct MetalPreviewView: NSViewRepresentable {
             startRedrawLoop()
         }
 
-        func update(configuration: PreviewRenderConfiguration, view: MTKView) {
+        func update(configuration: PreviewRenderConfiguration, isRunning: Bool, videoRecorder: PreviewVideoRecorder?, view: MTKView) {
             self.view = view
             liveConfiguration = configuration
+            liveVideoRecorder = videoRecorder
+            if liveIsRunning != isRunning {
+                if isRunning {
+                    startTime = CACurrentMediaTime() - CFTimeInterval(frozenRenderTime)
+                } else {
+                    frozenRenderTime = Float(CACurrentMediaTime() - startTime)
+                }
+                liveIsRunning = isRunning
+            }
             let newSignature = signature(for: configuration)
             if newSignature != compiledSignature {
                 sceneRenderers.values.forEach { $0.scene = nil }
@@ -146,6 +207,11 @@ struct MetalPreviewView: NSViewRepresentable {
                 compilePipelines(for: view, configuration: configuration)
             }
             view.draw()
+        }
+
+        private func currentRenderTime() -> Float {
+            guard liveIsRunning else { return frozenRenderTime }
+            return Float(CACurrentMediaTime() - startTime)
         }
 
         deinit {
@@ -165,6 +231,7 @@ struct MetalPreviewView: NSViewRepresentable {
             }
 
             renderTexturePoolIndices.removeAll(keepingCapacity: true)
+            frameScene3DRenderTextures.removeAll(keepingCapacity: true)
 
             switch liveConfiguration {
             case .empty:
@@ -191,7 +258,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: primaryTexture,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime),
+                    currentTime: currentRenderTime(),
                     role: .primary
                 )
 
@@ -200,7 +267,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: secondaryTexture,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime),
+                    currentTime: currentRenderTime(),
                     role: .secondary
                 )
 
@@ -217,7 +284,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .lineBatch(let pass):
                 encodeLineBatchPass(
@@ -231,7 +298,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .scene3DText(let pass):
                 encodeScene3DTextPass(
@@ -239,7 +306,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .scene3DModel(let pass):
                 encodeScene3DModelPass(
@@ -247,7 +314,15 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
+                )
+            case .scene3DGaussianSplat(let pass):
+                encodeScene3DGaussianSplatPass(
+                    pass,
+                    into: renderPassDescriptor,
+                    commandBuffer: commandBuffer,
+                    drawableSize: view.drawableSize,
+                    currentTime: currentRenderTime()
                 )
             case .scene3DParticle(let pass):
                 encodeScene3DParticlePass(
@@ -255,7 +330,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .scene3DRender(let pass):
                 encodeScene3DRenderPass(
@@ -263,7 +338,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .transition(let pass):
                 encodeTransitionPass(
@@ -271,7 +346,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .trail(let pass):
                 guard let trailPipelineState else { return }
@@ -280,7 +355,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     with: trailPipelineState,
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .circle(let pass):
                 guard let circlePipelineState else { return }
@@ -325,7 +400,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .underwater(let pass):
                 encodeUnderwaterPass(
@@ -333,7 +408,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .feedback(let pass):
                 encodeFeedbackPass(
@@ -341,7 +416,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     into: renderPassDescriptor,
                     commandBuffer: commandBuffer,
                     drawableSize: view.drawableSize,
-                    currentTime: Float(CACurrentMediaTime() - startTime)
+                    currentTime: currentRenderTime()
                 )
             case .layers(let layers, let opacity):
                 guard let displayPipelineState = videoPipelineState else {
@@ -369,12 +444,17 @@ struct MetalPreviewView: NSViewRepresentable {
                 )
 
                 for (index, layer) in connectedLayers.enumerated() {
+                    clearRenderTexture(
+                        overlayTexture,
+                        color: SIMD4<Float>(0, 0, 0, 0),
+                        commandBuffer: commandBuffer
+                    )
                     renderPassSource(
                         layer.source,
                         into: overlayTexture,
                         commandBuffer: commandBuffer,
                         drawableSize: view.drawableSize,
-                        currentTime: Float(CACurrentMediaTime() - startTime),
+                        currentTime: currentRenderTime(),
                         role: index.isMultiple(of: 2) ? .secondary : .primary
                     )
                     encodeLayerCompositePass(
@@ -396,6 +476,9 @@ struct MetalPreviewView: NSViewRepresentable {
             }
 
             commandBuffer.present(drawable)
+            if let liveVideoRecorder {
+                liveVideoRecorder.capture(texture: drawable.texture, displaySize: view.bounds.size)
+            }
             commandBuffer.commit()
         }
 
@@ -409,19 +492,26 @@ struct MetalPreviewView: NSViewRepresentable {
             guard let view else { return }
 
             var imageUniformTextures: [MTLTexture] = []
-            if pass.imageUniformSources.isEmpty == false {
-                for (index, source) in pass.imageUniformSources.enumerated() {
+            let imageUniformCount = max(
+                pass.imageUniformSources.count,
+                pass.uniforms.filter { $0.kind == .image }.count,
+                declaredResourceBindingCount(in: pass.metalSource, attribute: "texture"),
+                declaredResourceBindingCount(in: pass.metalSource, attribute: "sampler")
+            )
+            if imageUniformCount > 0 {
+                for index in 0..<imageUniformCount {
                     guard let texture = makeRenderTexture(for: view) else {
                         return
                     }
+                    let source = index < pass.imageUniformSources.count ? pass.imageUniformSources[index] : nil
                     if let source {
                         renderPassSource(
                             source,
                             into: texture,
                             commandBuffer: commandBuffer,
                             drawableSize: drawableSize,
-                            currentTime: Float(CACurrentMediaTime() - startTime),
-                            role: index.isMultiple(of: 2) ? .secondary : .primary
+                            currentTime: currentRenderTime(),
+                            role: .primary
                         )
                     } else {
                         clearRenderTexture(texture, color: SIMD4<Float>(0, 0, 0, 0), commandBuffer: commandBuffer)
@@ -436,7 +526,7 @@ struct MetalPreviewView: NSViewRepresentable {
 
             var frameUniforms = PreviewUniforms(
                 resolution: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
-                time: Float(CACurrentMediaTime() - startTime),
+                time: currentRenderTime(),
                 date: makeDateVector()
             )
             let floatUniforms = makeFloatUniformBuffer(from: pass.uniforms)
@@ -485,6 +575,24 @@ struct MetalPreviewView: NSViewRepresentable {
             }
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             encoder.endEncoding()
+        }
+
+        private func declaredResourceBindingCount(in source: String, attribute: String) -> Int {
+            let pattern = #"\[\[\#(attribute)\((\d+)\)\]\]"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                return 0
+            }
+            let range = NSRange(source.startIndex..<source.endIndex, in: source)
+            let maxIndex = regex.matches(in: source, range: range).compactMap { match -> Int? in
+                guard
+                    match.numberOfRanges > 1,
+                    let matchRange = Range(match.range(at: 1), in: source)
+                else {
+                    return nil
+                }
+                return Int(source[matchRange])
+            }.max()
+            return maxIndex.map { $0 + 1 } ?? 0
         }
 
         private func encodeCompositePass(
@@ -832,6 +940,14 @@ struct MetalPreviewView: NSViewRepresentable {
                     drawableSize: drawableSize,
                     currentTime: currentTime
                 )
+            case .scene3DGaussianSplat(let pass):
+                encodeScene3DGaussianSplatPass(
+                    pass,
+                    into: descriptor,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    currentTime: currentTime
+                )
             case .scene3DParticle(let pass):
                 encodeScene3DParticlePass(
                     pass,
@@ -873,6 +989,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 clearRenderTexture(currentBaseTexture, color: SIMD4<Float>(0, 0, 0, 0), commandBuffer: commandBuffer)
 
                 for (index, layer) in layers.enumerated() {
+                    clearRenderTexture(overlayTexture, color: SIMD4<Float>(0, 0, 0, 0), commandBuffer: commandBuffer)
                     renderPassSource(
                         layer.source,
                         into: overlayTexture,
@@ -1008,6 +1125,41 @@ struct MetalPreviewView: NSViewRepresentable {
                 into: descriptor,
                 commandBuffer: commandBuffer
             )
+        }
+
+        private func encodeUnderwaterTexturePass(
+            texture: MTLTexture,
+            with pipelineState: MTLRenderPipelineState,
+            into descriptor: MTLRenderPassDescriptor,
+            commandBuffer: MTLCommandBuffer,
+            drawableSize: CGSize,
+            currentTime: Float,
+            distortion: Float,
+            scale: Float
+        ) {
+            guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else {
+                return
+            }
+
+            var uniforms = UnderwaterUniformsGPU(
+                renderSize: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
+                time: currentTime,
+                scale: max(scale, 0.001),
+                distortion: max(distortion, 0.0),
+                octaves: 5,
+                lacunarity: 2.0,
+                gain: 0.5,
+                amplitude: 0.6,
+                textureScale: 1.03,
+                uvClampMargin: 0.002
+            )
+
+            encoder.setRenderPipelineState(pipelineState)
+            encoder.setFragmentBytes(&uniforms, length: MemoryLayout<UnderwaterUniformsGPU>.stride, index: 0)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.setFragmentSamplerState(samplerState, index: 0)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            encoder.endEncoding()
         }
 
         private func encodeUnderwaterPass(
@@ -1252,7 +1404,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 let device,
                 let displayPipelineState = videoPipelineState,
                 let outputTexture = makeRenderTexture(for: drawableSize),
-                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture)
+                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture, includeDepth: true)
             else {
                 return
             }
@@ -1300,7 +1452,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 let device,
                 let displayPipelineState = videoPipelineState,
                 let outputTexture = makeRenderTexture(for: drawableSize),
-                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture)
+                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture, includeDepth: true)
             else {
                 return
             }
@@ -1348,7 +1500,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 let device,
                 let displayPipelineState = videoPipelineState,
                 let outputTexture = makeRenderTexture(for: drawableSize),
-                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture)
+                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture, includeDepth: true)
             else {
                 return
             }
@@ -1373,7 +1525,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 materialTextures: materialTextures
             )
             renderer.pointOfView = renderer.scene?.rootNode.childNode(withName: "camera", recursively: true)
-            renderer.isPlaying = true
+            renderer.isPlaying = liveIsRunning
             renderer.render(
                 atTime: TimeInterval(currentTime),
                 viewport: CGRect(origin: .zero, size: drawableSize),
@@ -1400,7 +1552,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 let device,
                 let displayPipelineState = videoPipelineState,
                 let outputTexture = makeRenderTexture(for: drawableSize),
-                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture)
+                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture, includeDepth: true)
             else {
                 return
             }
@@ -1419,10 +1571,10 @@ struct MetalPreviewView: NSViewRepresentable {
                 currentTime: currentTime
             )
             let renderer = sceneRenderer(for: pass, device: device)
-            renderer.scene = scene3DParticleScene(for: pass, spriteImage: spriteImage)
+            renderer.scene = scene3DParticleScene(for: pass, spriteImage: spriteImage, currentTime: currentTime)
             updateParticleSpriteImage(in: renderer.scene, spriteImage: spriteImage)
             renderer.pointOfView = renderer.scene?.rootNode.childNode(withName: "camera", recursively: true)
-            renderer.isPlaying = true
+            renderer.isPlaying = liveIsRunning
             renderer.render(
                 atTime: TimeInterval(currentTime),
                 viewport: CGRect(origin: .zero, size: drawableSize),
@@ -1436,6 +1588,53 @@ struct MetalPreviewView: NSViewRepresentable {
                 into: descriptor,
                 commandBuffer: commandBuffer
             )
+        }
+
+        private func encodeScene3DGaussianSplatPass(
+            _ pass: PreviewScene3DGaussianSplatPass,
+            into descriptor: MTLRenderPassDescriptor,
+            commandBuffer: MTLCommandBuffer,
+            drawableSize: CGSize,
+            currentTime: Float
+        ) {
+            guard
+                let pipelineState = gaussianSplatPipelineState,
+                let bufferEntry = gaussianSplatBuffer(for: pass),
+                let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor)
+            else {
+                return
+            }
+
+            var uniforms = GaussianSplatUniformsGPU(
+                resolution: SIMD2<Float>(Float(max(drawableSize.width, 1)), Float(max(drawableSize.height, 1))),
+                position: SIMD3<Float>(Float(pass.settings.positionX), Float(pass.settings.positionY), Float(pass.settings.positionZ)),
+                scale: Float(max(0.001, pass.settings.scale)),
+                rotationRadians: SIMD3<Float>(
+                    Float(pass.settings.rotationX * .pi / 180.0),
+                    Float(pass.settings.rotationY * .pi / 180.0),
+                    Float(pass.settings.rotationZ * .pi / 180.0)
+                ),
+                cameraDistance: Float(pass.settings.cameraDistance),
+                cameraOrbitRadians: Float(pass.settings.cameraOrbit * .pi / 180.0),
+                cameraPitchRadians: Float(pass.settings.cameraPitch * .pi / 180.0),
+                cameraPan: SIMD2<Float>(Float(pass.settings.cameraPanX), Float(pass.settings.cameraPanY)),
+                pointSize: Float(max(0.1, pass.settings.pointSize)),
+                opacity: Float(max(0.0, min(1.0, pass.settings.opacity))),
+                explode: Float(max(0.0, pass.settings.explode)),
+                chaos: Float(max(0.0, min(1.0, pass.settings.chaos))),
+                particleSpeed: Float(max(0.0, pass.settings.particleSpeed)),
+                particleGravity: Float(pass.settings.particleGravity),
+                particleTurbulence: Float(max(0.0, pass.settings.particleTurbulence)),
+                particleBoundary: Float(max(0.1, pass.settings.particleBoundary)),
+                time: currentTime,
+                isPanorama: pass.settings.panoramaImageData.isEmpty ? 0.0 : 1.0
+            )
+
+            encoder.setRenderPipelineState(pipelineState)
+            encoder.setVertexBuffer(bufferEntry.buffer, offset: 0, index: 0)
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<GaussianSplatUniformsGPU>.stride, index: 1)
+            encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: bufferEntry.count)
+            encoder.endEncoding()
         }
 
         private func encodeScene3DRenderPass(
@@ -1446,12 +1645,58 @@ struct MetalPreviewView: NSViewRepresentable {
             currentTime: Float
         ) {
             guard
-                let device,
                 let displayPipelineState = videoPipelineState,
-                let outputTexture = makeRenderTexture(for: drawableSize),
-                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture)
+                let texture = scene3DRenderTexture(
+                    for: pass,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    currentTime: currentTime
+                )
             else {
                 return
+            }
+
+            encodeTextureDisplayPass(
+                texture: texture,
+                with: displayPipelineState,
+                into: descriptor,
+                commandBuffer: commandBuffer
+            )
+        }
+
+        private func scene3DRenderTexture(
+            for pass: PreviewScene3DRenderPass,
+            commandBuffer: MTLCommandBuffer,
+            drawableSize: CGSize,
+            currentTime: Float
+        ) -> MTLTexture? {
+            guard let device else { return nil }
+
+            let cacheKey = [
+                pass.nodeID.uuidString,
+                "\(Int(max(drawableSize.width, 1)))x\(Int(max(drawableSize.height, 1)))",
+                String(pass.cameraDistance),
+                String(pass.cameraOrbit),
+                String(pass.cameraPitch),
+                String(pass.cameraPanX),
+                String(pass.cameraPanY),
+                String(pass.backgroundAlpha),
+                String(pass.defaultLightIntensity),
+                String(pass.waterDistortion),
+                String(pass.waterScale),
+                String(pass.waterSpeed),
+                pass.sources.map { signature(for: $0) }.joined(separator: ",")
+            ].joined(separator: "|")
+
+            if let cached = frameScene3DRenderTextures[cacheKey] {
+                return cached
+            }
+
+            guard
+                let outputTexture = makeRenderTexture(for: drawableSize),
+                let outputDescriptor = offscreenRenderPassDescriptor(for: outputTexture, includeDepth: true)
+            else {
+                return nil
             }
 
             outputDescriptor.colorAttachments[0].clearColor = MTLClearColor(
@@ -1461,6 +1706,31 @@ struct MetalPreviewView: NSViewRepresentable {
                 alpha: Double(pass.backgroundAlpha)
             )
 
+            var gaussianSplatPasses: [PreviewScene3DGaussianSplatPass] = []
+            for source in pass.sources {
+                appendGaussianSplatPasses(from: source, renderPass: pass, into: &gaussianSplatPasses)
+            }
+
+            let depthTexture = outputDescriptor.depthAttachment.texture
+            if !gaussianSplatPasses.isEmpty {
+                // Draw splats first as the environment layer, then let SceneKit render
+                // models, lights, and particles over it with a fresh depth buffer.
+                outputDescriptor.depthAttachment.texture = nil
+                for gaussianSplatPass in gaussianSplatPasses {
+                    encodeScene3DGaussianSplatPass(
+                        gaussianSplatPass,
+                        into: outputDescriptor,
+                        commandBuffer: commandBuffer,
+                        drawableSize: drawableSize,
+                        currentTime: currentTime
+                    )
+                    outputDescriptor.colorAttachments[0].loadAction = .load
+                }
+                outputDescriptor.depthAttachment.texture = depthTexture
+                outputDescriptor.depthAttachment.loadAction = .clear
+                outputDescriptor.colorAttachments[0].loadAction = .load
+            }
+
             let renderer = sceneRenderer(for: pass, device: device)
             renderer.scene = scene3DRenderScene(
                 for: pass,
@@ -1469,7 +1739,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 currentTime: currentTime
             )
             renderer.pointOfView = renderer.scene?.rootNode.childNode(withName: "camera", recursively: true)
-            renderer.isPlaying = true
+            renderer.isPlaying = liveIsRunning
             renderer.render(
                 atTime: TimeInterval(currentTime),
                 viewport: CGRect(origin: .zero, size: drawableSize),
@@ -1477,12 +1747,26 @@ struct MetalPreviewView: NSViewRepresentable {
                 passDescriptor: outputDescriptor
             )
 
-            encodeTextureDisplayPass(
-                texture: outputTexture,
-                with: displayPipelineState,
-                into: descriptor,
-                commandBuffer: commandBuffer
-            )
+            if pass.waterDistortion > 0.0001,
+               let underwaterPipelineState,
+               let distortedTexture = makeRenderTexture(for: drawableSize),
+               let distortedDescriptor = offscreenRenderPassDescriptor(for: distortedTexture) {
+                encodeUnderwaterTexturePass(
+                    texture: outputTexture,
+                    with: underwaterPipelineState,
+                    into: distortedDescriptor,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    currentTime: currentTime * max(pass.waterSpeed, 0.0),
+                    distortion: pass.waterDistortion,
+                    scale: pass.waterScale
+                )
+                frameScene3DRenderTextures[cacheKey] = distortedTexture
+                return distortedTexture
+            }
+
+            frameScene3DRenderTextures[cacheKey] = outputTexture
+            return outputTexture
         }
 
         private func scene3DRenderScene(
@@ -1491,21 +1775,54 @@ struct MetalPreviewView: NSViewRepresentable {
             drawableSize: CGSize,
             currentTime: Float
         ) -> SCNScene {
-            let passSignature = "scene3drender:\(pass.nodeID.uuidString):\(pass.sources.map(signature(for:)).joined(separator: ":")):\(pass.cameraDistance):\(pass.cameraOrbit):\(pass.cameraPitch):\(pass.cameraPanX):\(pass.cameraPanY):\(pass.backgroundAlpha):\(pass.defaultLightIntensity)"
-            if let existing = scene3DRenderScenes[pass.nodeID],
-               scene3DRenderSceneSignatures[pass.nodeID] == passSignature {
-                return existing
-            }
-
-            let scene = makeScene(
+            // Scene render nodes can contain animated models and live material textures.
+            // Rebuild the lightweight composite scene each frame so layer outputs do not
+            // hold onto stale SceneKit nodes/textures when the render node is used as a shader.
+            makeScene(
                 for: pass,
                 commandBuffer: commandBuffer,
                 drawableSize: drawableSize,
                 currentTime: currentTime
             )
-            scene3DRenderScenes[pass.nodeID] = scene
-            scene3DRenderSceneSignatures[pass.nodeID] = passSignature
-            return scene
+        }
+
+        private func appendGaussianSplatPasses(
+            from source: PreviewScene3DSource,
+            renderPass: PreviewScene3DRenderPass,
+            into passes: inout [PreviewScene3DGaussianSplatPass]
+        ) {
+            switch source {
+            case .gaussianSplat(let gaussianSplatPass):
+                var settings = gaussianSplatPass.settings
+                settings.cameraDistance = Double(renderPass.cameraDistance)
+                settings.cameraOrbit = Double(renderPass.cameraOrbit)
+                settings.cameraPitch = Double(renderPass.cameraPitch)
+                settings.cameraPanX = Double(renderPass.cameraPanX)
+                settings.cameraPanY = Double(renderPass.cameraPanY)
+                passes.append(PreviewScene3DGaussianSplatPass(
+                    nodeID: gaussianSplatPass.nodeID,
+                    settings: settings
+                ))
+            case .transform(_, let child, let x, let y, let z, let scaleX, let scaleY, let scaleZ, let rotationX, let rotationY, let rotationZ):
+                let startIndex = passes.count
+                appendGaussianSplatPasses(from: child, renderPass: renderPass, into: &passes)
+                for index in startIndex..<passes.count {
+                    var settings = passes[index].settings
+                    settings.positionX += Double(x)
+                    settings.positionY += Double(y)
+                    settings.positionZ += Double(z)
+                    settings.scale *= Double((scaleX + scaleY + scaleZ) / 3.0)
+                    settings.rotationX += Double(rotationX)
+                    settings.rotationY += Double(rotationY)
+                    settings.rotationZ += Double(rotationZ)
+                    passes[index] = PreviewScene3DGaussianSplatPass(
+                        nodeID: passes[index].nodeID,
+                        settings: settings
+                    )
+                }
+            case .primitive, .text, .model, .particle, .light:
+                break
+            }
         }
 
         private func encodeTrailPass(
@@ -1562,6 +1879,7 @@ struct MetalPreviewView: NSViewRepresentable {
             videoPipelineState = nil
             underwaterPipelineState = nil
             coreImageEffectPipelineState = nil
+            gaussianSplatPipelineState = nil
 
             guard let device else { return }
 
@@ -1574,9 +1892,6 @@ struct MetalPreviewView: NSViewRepresentable {
                     videoPipelineState = compileVideoPipeline(for: view, device: device)
                     for source in pass.imageUniformSources {
                         guard let source else { continue }
-                        if case .shader = source {
-                            continue
-                        }
                         compilePipeline(
                             for: source,
                             role: .secondary,
@@ -1674,6 +1989,8 @@ struct MetalPreviewView: NSViewRepresentable {
                     }
                 }
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
+            case .scene3DGaussianSplat:
+                gaussianSplatPipelineState = compileGaussianSplatPipeline(for: view, device: device)
             case .scene3DParticle(let pass):
                 if let spriteSource = pass.spriteSource {
                     compilePipeline(for: spriteSource, role: .primary, view: view, device: device)
@@ -1681,6 +1998,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
             case .scene3DRender(let pass):
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
+                underwaterPipelineState = compileUnderwaterPipeline(for: view, device: device)
                 for source in pass.sources {
                     compileScene3DSourcePipeline(source, view: view, device: device)
                 }
@@ -1718,6 +2036,10 @@ struct MetalPreviewView: NSViewRepresentable {
                 descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
                 return try device.makeRenderPipelineState(descriptor: descriptor)
             } catch {
+                let sourceID = source.hashValue
+                if loggedShaderCompileFailures.insert(sourceID).inserted {
+                    print("Metal shader compile failed: \(error)")
+                }
                 return nil
             }
         }
@@ -1843,6 +2165,8 @@ struct MetalPreviewView: NSViewRepresentable {
             case .model(let pass):
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
                 compileScene3DMaterialPipelines(pass.materialMaps, view: view, device: device)
+            case .gaussianSplat:
+                gaussianSplatPipelineState = compileGaussianSplatPipeline(for: view, device: device)
             case .particle(let pass):
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
                 if let spriteSource = pass.spriteSource {
@@ -1864,6 +2188,13 @@ struct MetalPreviewView: NSViewRepresentable {
                     primaryPipelineState = pipeline
                 case .secondary:
                     secondaryPipelineState = pipeline
+                }
+                if pass.imageUniformSources.isEmpty == false {
+                    videoPipelineState = compileVideoPipeline(for: view, device: device)
+                    for source in pass.imageUniformSources {
+                        guard let source else { continue }
+                        compilePipeline(for: source, role: .secondary, view: view, device: device)
+                    }
                 }
             case .clear:
                 break
@@ -1893,6 +2224,8 @@ struct MetalPreviewView: NSViewRepresentable {
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
             case .scene3DModel:
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
+            case .scene3DGaussianSplat:
+                gaussianSplatPipelineState = compileGaussianSplatPipeline(for: view, device: device)
             case .scene3DParticle(let pass):
                 if let spriteSource = pass.spriteSource {
                     compilePipeline(for: spriteSource, role: .primary, view: view, device: device)
@@ -1902,6 +2235,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 compileScene3DSourcePipeline(source, view: view, device: device)
             case .scene3DRender(let pass):
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
+                underwaterPipelineState = compileUnderwaterPipeline(for: view, device: device)
                 for source in pass.sources {
                     compileScene3DSourcePipeline(source, view: view, device: device)
                 }
@@ -2057,6 +2391,33 @@ struct MetalPreviewView: NSViewRepresentable {
             }
         }
 
+        private func compileGaussianSplatPipeline(for view: MTKView, device: MTLDevice) -> MTLRenderPipelineState? {
+            do {
+                let library = try device.makeLibrary(source: Self.gaussianSplatShaderSource, options: nil)
+                guard
+                    let vertexFunction = library.makeFunction(name: "gaussianSplatVertex"),
+                    let fragmentFunction = library.makeFunction(name: "gaussianSplatFragment")
+                else {
+                    return nil
+                }
+
+                let descriptor = MTLRenderPipelineDescriptor()
+                descriptor.vertexFunction = vertexFunction
+                descriptor.fragmentFunction = fragmentFunction
+                descriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+                descriptor.colorAttachments[0].isBlendingEnabled = true
+                descriptor.colorAttachments[0].rgbBlendOperation = .add
+                descriptor.colorAttachments[0].alphaBlendOperation = .add
+                descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+                descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+                descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+                descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+                return try device.makeRenderPipelineState(descriptor: descriptor)
+            } catch {
+                return nil
+            }
+        }
+
         private func makeRenderTexture(for view: MTKView) -> MTLTexture? {
             return makeRenderTexture(for: view.drawableSize)
         }
@@ -2118,12 +2479,31 @@ struct MetalPreviewView: NSViewRepresentable {
             return device!.makeTexture(descriptor: descriptor)!
         }
 
-        private func offscreenRenderPassDescriptor(for texture: MTLTexture) -> MTLRenderPassDescriptor? {
+        private func makeDepthTexture(width: Int, height: Int) -> MTLTexture? {
+            guard let device else { return nil }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .depth32Float,
+                width: max(width, 1),
+                height: max(height, 1),
+                mipmapped: false
+            )
+            descriptor.usage = [.renderTarget]
+            descriptor.storageMode = .private
+            return device.makeTexture(descriptor: descriptor)
+        }
+
+        private func offscreenRenderPassDescriptor(for texture: MTLTexture, includeDepth: Bool = false) -> MTLRenderPassDescriptor? {
             let descriptor = MTLRenderPassDescriptor()
             descriptor.colorAttachments[0].texture = texture
             descriptor.colorAttachments[0].loadAction = .clear
             descriptor.colorAttachments[0].storeAction = .store
             descriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+            if includeDepth, let depthTexture = makeDepthTexture(width: texture.width, height: texture.height) {
+                descriptor.depthAttachment.texture = depthTexture
+                descriptor.depthAttachment.loadAction = .clear
+                descriptor.depthAttachment.storeAction = .dontCare
+                descriptor.depthAttachment.clearDepth = 1.0
+            }
             return descriptor
         }
 
@@ -2546,12 +2926,24 @@ struct MetalPreviewView: NSViewRepresentable {
                 0
             )
             scene.rootNode.addChildNode(cameraNode)
-            scene.rootNode.addChildNode(particleNode(for: settings, spriteImage: spriteImage))
+            if pass.settings.spriteStyle == .fish {
+                scene.rootNode.addChildNode(fishSchoolNode(for: pass, spriteImage: spriteImage, currentTime: 0, useCache: false))
+            } else {
+                scene.rootNode.addChildNode(particleNode(for: settings, spriteImage: spriteImage))
+            }
             return scene
         }
 
-        private func scene3DParticleScene(for pass: PreviewScene3DParticlePass, spriteImage: Any?) -> SCNScene {
-            let passSignature = "scene3dparticle:\(pass.nodeID.uuidString):\(pass.settings.shape.rawValue)"
+        private func scene3DParticleScene(for pass: PreviewScene3DParticlePass, spriteImage: Any?, currentTime: Float) -> SCNScene {
+            if pass.settings.spriteStyle == .fish {
+                let scene = makeScene(for: pass, spriteImage: spriteImage)
+                if let fishNode = scene.rootNode.childNodes.first(where: { $0.name == "fishSchool" }) {
+                    updateFishSchoolNode(fishNode, settings: pass.settings, spriteImage: spriteImage, currentTime: currentTime)
+                }
+                return scene
+            }
+
+            let passSignature = "scene3dparticle:\(pass.nodeID.uuidString):\(pass.settings.shape.rawValue):\(pass.settings.spriteStyle.rawValue):\(pass.settings.blendMode.rawValue):\(pass.settings.scale):\(pass.settings.particleCount):\(pass.settings.birthRate):\(pass.settings.lifetime):\(pass.settings.speed):\(pass.settings.spread):\(pass.settings.boxWidth):\(pass.settings.boxHeight):\(pass.settings.boxDepth):\(pass.settings.size)"
             if let existing = particleScenes[pass.nodeID],
                particleSceneSignatures[pass.nodeID] == passSignature {
                 updateParticleNode(in: existing, settings: pass.settings, spriteImage: spriteImage)
@@ -2564,13 +2956,192 @@ struct MetalPreviewView: NSViewRepresentable {
             return scene
         }
 
+        private func sceneParticleNode(for pass: PreviewScene3DParticlePass, spriteImage: Any?, currentTime: Float) -> SCNNode {
+            if pass.settings.spriteStyle == .fish {
+                return fishSchoolNode(for: pass, spriteImage: spriteImage, currentTime: currentTime, useCache: true)
+            }
+
+            let signature = "sceneParticle:\(pass.nodeID.uuidString):\(pass.settings.shape.rawValue):\(pass.settings.spriteStyle.rawValue):\(pass.settings.blendMode.rawValue):\(pass.settings.scale):\(pass.settings.particleCount):\(pass.settings.birthRate):\(pass.settings.lifetime):\(pass.settings.speed):\(pass.settings.spread):\(pass.settings.boxWidth):\(pass.settings.boxHeight):\(pass.settings.boxDepth):\(pass.settings.size)"
+            if let cached = sceneParticleNodes[pass.nodeID],
+               cached.signature == signature {
+                updateParticleNode(cached.node, settings: pass.settings, spriteImage: spriteImage)
+                return cached.node
+            }
+
+            let node = particleNode(for: pass.settings, spriteImage: spriteImage)
+            sceneParticleNodes[pass.nodeID] = (signature, node)
+            return node
+        }
+
+        private func fishSchoolNode(for pass: PreviewScene3DParticlePass, spriteImage: Any?, currentTime: Float, useCache: Bool) -> SCNNode {
+            let count = min(max(Int(pass.settings.particleCount.rounded()), 0), 2_000)
+            let signature = "fishSchoolRig2:\(pass.nodeID.uuidString):\(count):\(pass.settings.blendMode.rawValue)"
+            if useCache,
+               let cached = sceneParticleNodes[pass.nodeID],
+               cached.signature == signature {
+                updateFishSchoolNode(cached.node, settings: pass.settings, spriteImage: spriteImage, currentTime: currentTime)
+                return cached.node
+            }
+
+            let root = SCNNode()
+            root.name = "fishSchool"
+
+            for _ in 0..<count {
+                let geometry = SCNPlane(width: 1.0, height: 0.42)
+                let billboard = SCNNode()
+                billboard.name = "fishBillboard"
+                billboard.constraints = [SCNBillboardConstraint()]
+
+                let sprite = SCNNode(geometry: geometry)
+                sprite.name = "fishSprite"
+                billboard.addChildNode(sprite)
+                root.addChildNode(billboard)
+            }
+
+            if useCache {
+                sceneParticleNodes[pass.nodeID] = (signature, root)
+            }
+            updateFishSchoolNode(root, settings: pass.settings, spriteImage: spriteImage, currentTime: currentTime)
+            return root
+        }
+
+        private func updateFishSchoolNode(_ root: SCNNode, settings: Scene3DParticleNodeSettings, spriteImage: Any?, currentTime: Float) {
+            updateParticleNodeTransform(root, settings: settings)
+
+            let speed = max(0.0, Float(settings.speed))
+            let time = speed <= 0.0001 ? 0.0 : currentTime * speed * 0.18
+            let extent = max(0.35, Float(settings.spread) * 0.08)
+            let depth = max(0.2, extent * 0.65)
+            let size = max(0.001, Float(settings.size))
+            let gravity = Float(settings.gravityY)
+            let lifetime = max(0.1, Float(settings.lifetime))
+            let columns = max(1, Int(settings.spriteSheetColumns.rounded()))
+            let rows = max(1, Int(settings.spriteSheetRows.rounded()))
+            let sheetCapacity = max(1, columns * rows)
+            let sheetCount = min(sheetCapacity, max(1, Int(settings.spriteSheetCount.rounded())))
+            let wobbleAmount = max(0.0, Float(settings.spriteWobble))
+            let wobbleSpeed = max(0.0, Float(settings.spriteWobbleSpeed))
+
+            for (index, billboard) in root.childNodes.enumerated() {
+                let sprite = billboard.childNodes.first(where: { $0.name == "fishSprite" }) ?? billboard
+                let fi = Float(index)
+                let spriteIndex = settings.spriteSheetRandom
+                    ? min(sheetCount - 1, Int(fishHash(fi + 307.0) * Float(sheetCount)))
+                    : index % sheetCount
+                let seedX = fishHash(fi + 11.1)
+                let seedY = fishHash(fi + 29.7)
+                let seedZ = fishHash(fi + 53.3)
+                let seedSpeed = 0.55 + fishHash(fi + 91.9) * 0.75
+                let phase = fishHash(fi + 133.7) * 6.2831855
+                let age = speed <= 0.0001 ? 0.0 : fmod(max(0.0, time * seedSpeed + phase), lifetime) / lifetime
+
+                let baseX = (seedX * 2.0 - 1.0) * extent
+                let baseY = (seedY * 2.0 - 1.0) * extent * 0.45
+                let baseZ = (seedZ * 2.0 - 1.0) * depth
+                let drift = speed <= 0.0001 ? 0.0 : time * (0.25 + seedSpeed * 0.35)
+
+                let x = wrapFishCoordinate(baseX + drift, limit: extent)
+                let swim = sin(time * (0.8 + seedSpeed) + phase)
+                let y = wrapFishCoordinate(baseY + swim * extent * 0.08 + gravity * age * age * 0.08, limit: max(0.2, extent * 0.6))
+                let z = wrapFishCoordinate(baseZ + cos(time * (0.55 + seedSpeed) + phase) * depth * 0.15, limit: depth)
+
+                billboard.position = SCNVector3(x, y, z)
+                sprite.geometry?.firstMaterial = fishSchoolMaterial(
+                    settings: settings,
+                    spriteImage: spriteImage,
+                    spriteIndex: spriteIndex
+                )
+                let sizeVariation = 0.72 + fishHash(fi + 211.0) * 0.55
+                let flipX: Float = settings.spriteFlipX ? -1.0 : 1.0
+                let flipY: Float = settings.spriteFlipY ? -1.0 : 1.0
+                billboard.scale = SCNVector3(
+                    size * sizeVariation * flipX,
+                    size * sizeVariation * flipY,
+                    size * sizeVariation
+                )
+                if wobbleAmount > 0.0001 {
+                    let wobblePhase = phase + fishHash(fi + 421.0) * 6.2831855
+                    let roll = sin(currentTime * wobbleSpeed + wobblePhase) * wobbleAmount * 0.65
+                    sprite.eulerAngles = SCNVector3(0.0, 0.0, roll)
+                } else {
+                    sprite.eulerAngles = SCNVector3Zero
+                }
+                billboard.opacity = CGFloat(max(0.0, min(1.0, settings.alpha)))
+            }
+        }
+
+        private func fishSchoolMaterial(settings: Scene3DParticleNodeSettings, spriteImage: Any?, spriteIndex: Int) -> SCNMaterial {
+            let material = SCNMaterial()
+            material.lightingModel = .constant
+            material.diffuse.contents = spriteImage ?? particleSpriteImage(style: .fish)
+            material.diffuse.intensity = 1.0
+            material.diffuse.wrapS = .clamp
+            material.diffuse.wrapT = .clamp
+            material.diffuse.contentsTransform = spriteSheetTransform(
+                columns: max(1, Int(settings.spriteSheetColumns.rounded())),
+                rows: max(1, Int(settings.spriteSheetRows.rounded())),
+                spriteIndex: spriteIndex
+            )
+            material.multiply.contents = NSColor(
+                red: settings.red,
+                green: settings.green,
+                blue: settings.blue,
+                alpha: settings.alpha
+            )
+            material.isDoubleSided = true
+            material.readsFromDepthBuffer = true
+            material.writesToDepthBuffer = false
+            material.transparency = CGFloat(max(0.0, min(1.0, settings.alpha)))
+            switch settings.blendMode {
+            case .alpha:
+                material.blendMode = .alpha
+            case .additive:
+                material.blendMode = .add
+            case .screen:
+                material.blendMode = .screen
+            }
+            return material
+        }
+
+        private func spriteSheetTransform(columns: Int, rows: Int, spriteIndex: Int) -> SCNMatrix4 {
+            let safeColumns = max(1, columns)
+            let safeRows = max(1, rows)
+            let clampedIndex = max(0, min(spriteIndex, safeColumns * safeRows - 1))
+            let column = clampedIndex % safeColumns
+            let row = clampedIndex / safeColumns
+            let tileWidth = CGFloat(1.0 / Float(safeColumns))
+            let tileHeight = CGFloat(1.0 / Float(safeRows))
+            var transform = SCNMatrix4Identity
+            transform.m11 = tileWidth
+            transform.m22 = tileHeight
+            transform.m41 = CGFloat(column) * tileWidth
+            // Texture coordinates are bottom-origin; treat row 0 as the top row of the sheet.
+            transform.m42 = 1.0 - CGFloat(row + 1) * tileHeight
+            return transform
+        }
+
+        private func fishHash(_ value: Float) -> Float {
+            let hashed = sin(Double(value) * 12.9898) * 43758.5453
+            return Float(hashed - floor(hashed))
+        }
+
+        private func wrapFishCoordinate(_ value: Float, limit: Float) -> Float {
+            guard limit > 0 else { return value }
+            let span = limit * 2.0
+            var wrapped = fmod(value + limit, span)
+            if wrapped < 0 {
+                wrapped += span
+            }
+            return wrapped - limit
+        }
+
         private func sourceContainsLight(_ source: PreviewScene3DSource) -> Bool {
             switch source {
             case .light:
                 return true
             case .transform(_, let child, _, _, _, _, _, _, _, _, _):
                 return sourceContainsLight(child)
-            case .primitive, .text, .model, .particle:
+            case .primitive, .text, .model, .gaussianSplat, .particle:
                 return false
             }
         }
@@ -2582,6 +3153,8 @@ struct MetalPreviewView: NSViewRepresentable {
             currentTime: Float
         ) -> SCNNode? {
             switch source {
+            case .gaussianSplat:
+                return nil
             case .primitive(let pass):
                 let materialTextures = scene3DMaterialTextures(
                     from: pass.materialMaps,
@@ -2658,7 +3231,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     drawableSize: drawableSize,
                     currentTime: currentTime
                 )
-                return particleNode(for: pass.settings, spriteImage: spriteImage)
+                return sceneParticleNode(for: pass, spriteImage: spriteImage, currentTime: currentTime)
             case .light(let previewLight):
                 return sceneLightNode(from: previewLight)
             case .transform(
@@ -2751,6 +3324,10 @@ struct MetalPreviewView: NSViewRepresentable {
             guard let node = scene.rootNode.childNode(withName: "particleEmitter", recursively: true) else {
                 return
             }
+            updateParticleNode(node, settings: settings, spriteImage: spriteImage)
+        }
+
+        private func updateParticleNode(_ node: SCNNode, settings: Scene3DParticleNodeSettings, spriteImage: Any?) {
             updateParticleNodeTransform(node, settings: settings)
             guard let system = node.particleSystems?.first else {
                 return
@@ -2780,26 +3357,36 @@ struct MetalPreviewView: NSViewRepresentable {
 
         private func updateParticleSystem(_ system: SCNParticleSystem, settings: Scene3DParticleNodeSettings, spriteImage: Any?) {
             let lifetime = max(0.05, settings.lifetime)
-            system.birthRate = CGFloat(max(settings.birthRate, settings.particleCount / lifetime))
+            let isFishSchool = settings.spriteStyle == .fish
+            let isDustHaze = settings.spriteStyle == .dust
+            let requestedSpeed = max(0.0, settings.speed)
+            let isStopped = requestedSpeed <= 0.0001
+            let velocity = requestedSpeed * (isFishSchool ? 0.035 : (isDustHaze ? 0.42 : 1.0))
+            let desiredBirthRate = max(settings.birthRate, settings.particleCount / lifetime)
+            system.birthRate = CGFloat((isFishSchool || isDustHaze) && isStopped ? 0.0 : desiredBirthRate)
+            system.warmupDuration = CGFloat((isFishSchool || isStopped) ? 0.0 : min(lifetime, isDustHaze ? 12.0 : 8.0))
             system.particleLifeSpan = CGFloat(settings.lifetime)
-            system.particleLifeSpanVariation = CGFloat(settings.lifetime * 0.35)
-            system.particleVelocity = CGFloat(settings.speed)
-            system.particleVelocityVariation = CGFloat(settings.speed * 0.45)
-            system.spreadingAngle = CGFloat(settings.spread)
+            system.particleLifeSpanVariation = CGFloat(isStopped ? 0.0 : settings.lifetime * (isFishSchool ? 0.04 : (isDustHaze ? 0.55 : 0.35)))
+            system.particleVelocity = CGFloat(velocity)
+            system.particleVelocityVariation = CGFloat(isStopped ? 0.0 : velocity * (isFishSchool ? 0.05 : (isDustHaze ? 0.85 : 0.45)))
+            system.speedFactor = liveIsRunning ? 1.0 : 0.0
+            system.spreadingAngle = CGFloat(isStopped ? 0.0 : (isFishSchool ? min(settings.spread, 6.0) : settings.spread))
             system.particleSize = CGFloat(settings.size)
-            system.particleSizeVariation = CGFloat(settings.size * 0.55)
+            system.particleSizeVariation = CGFloat(settings.size * (isFishSchool ? 0.04 : (isDustHaze ? 1.1 : 0.55)))
             system.particleColor = NSColor(
                 red: settings.red,
                 green: settings.green,
                 blue: settings.blue,
                 alpha: settings.alpha
             )
-            system.particleColorVariation = SCNVector4(0.08, 0.08, 0.08, 0.12)
-            system.acceleration = SCNVector3(0, Float(settings.gravityY), 0)
+            system.particleColorVariation = isDustHaze ? SCNVector4(0.18, 0.12, 0.06, 0.18) : SCNVector4(0.08, 0.08, 0.08, 0.12)
+            system.acceleration = isStopped ? SCNVector3Zero : SCNVector3(0, Float(settings.gravityY), 0)
             system.isAffectedByGravity = false
             system.loops = true
-            system.isLocal = false
-            system.particleImage = spriteImage ?? particleSpriteImage()
+            system.isLocal = isFishSchool || isDustHaze
+            system.birthLocation = isDustHaze ? .volume : .surface
+            system.birthDirection = isDustHaze ? .random : .surfaceNormal
+            system.particleImage = spriteImage ?? particleSpriteImage(style: settings.spriteStyle)
 
             switch settings.blendMode {
             case .alpha:
@@ -2810,13 +3397,22 @@ struct MetalPreviewView: NSViewRepresentable {
                 system.blendMode = .screen
             }
 
-            switch settings.shape {
-            case .point:
-                break
-            case .sphere:
-                system.emitterShape = SCNSphere(radius: 0.5)
-            case .box:
-                system.emitterShape = SCNBox(width: 1.0, height: 1.0, length: 1.0, chamferRadius: 0.0)
+            if isFishSchool {
+                system.emitterShape = nil
+            } else {
+                switch settings.shape {
+                case .point:
+                    system.emitterShape = nil
+                case .sphere:
+                    system.emitterShape = SCNSphere(radius: 0.5)
+                case .box:
+                    system.emitterShape = SCNBox(
+                        width: max(0.01, CGFloat(settings.boxWidth)),
+                        height: max(0.01, CGFloat(settings.boxHeight)),
+                        length: max(0.01, CGFloat(settings.boxDepth)),
+                        chamferRadius: 0.0
+                    )
+                }
             }
         }
 
@@ -2852,7 +3448,18 @@ struct MetalPreviewView: NSViewRepresentable {
             system.particleImage = spriteImage
         }
 
-        private func particleSpriteImage() -> NSImage {
+        private func particleSpriteImage(style: Scene3DParticleSpriteStyle = .glow) -> NSImage {
+            switch style {
+            case .glow:
+                return glowParticleSpriteImage()
+            case .fish:
+                return fishParticleSpriteImage()
+            case .dust:
+                return dustParticleSpriteImage()
+            }
+        }
+
+        private func glowParticleSpriteImage() -> NSImage {
             let size = NSSize(width: 32, height: 32)
             let image = NSImage(size: size)
             image.lockFocus()
@@ -2869,6 +3476,66 @@ struct MetalPreviewView: NSViewRepresentable {
             return image
         }
 
+        private func dustParticleSpriteImage() -> NSImage {
+            let size = NSSize(width: 48, height: 48)
+            let image = NSImage(size: size)
+            image.lockFocus()
+            defer { image.unlockFocus() }
+
+            NSColor.clear.setFill()
+            NSRect(origin: .zero, size: size).fill()
+
+            let bounds = NSRect(origin: .zero, size: size)
+            let oval = NSBezierPath(ovalIn: bounds.insetBy(dx: 1.0, dy: 1.0))
+            let gradient = NSGradient(colors: [
+                NSColor.white.withAlphaComponent(0.55),
+                NSColor.white.withAlphaComponent(0.18),
+                NSColor.white.withAlphaComponent(0.0)
+            ])
+            gradient?.draw(in: oval, relativeCenterPosition: NSPoint(x: -0.18, y: 0.16))
+
+            for index in 0..<10 {
+                let x = CGFloat((index * 17) % 43) + 2.0
+                let y = CGFloat((index * 29) % 41) + 3.0
+                let alpha = CGFloat(0.10 + Double(index % 4) * 0.035)
+                NSColor.white.withAlphaComponent(alpha).setFill()
+                NSBezierPath(ovalIn: NSRect(x: x, y: y, width: 2.0, height: 2.0)).fill()
+            }
+
+            return image
+        }
+
+        private func fishParticleSpriteImage() -> NSImage {
+            let size = NSSize(width: 64, height: 32)
+            let image = NSImage(size: size)
+            image.lockFocus()
+            defer { image.unlockFocus() }
+
+            NSColor.clear.setFill()
+            NSRect(origin: .zero, size: size).fill()
+
+            let body = NSBezierPath()
+            body.move(to: NSPoint(x: 8, y: 16))
+            body.curve(to: NSPoint(x: 42, y: 6), controlPoint1: NSPoint(x: 17, y: 4), controlPoint2: NSPoint(x: 32, y: 3))
+            body.curve(to: NSPoint(x: 56, y: 16), controlPoint1: NSPoint(x: 49, y: 8), controlPoint2: NSPoint(x: 54, y: 13))
+            body.curve(to: NSPoint(x: 42, y: 26), controlPoint1: NSPoint(x: 54, y: 19), controlPoint2: NSPoint(x: 49, y: 24))
+            body.curve(to: NSPoint(x: 8, y: 16), controlPoint1: NSPoint(x: 32, y: 29), controlPoint2: NSPoint(x: 17, y: 28))
+            body.close()
+
+            let tail = NSBezierPath()
+            tail.move(to: NSPoint(x: 8, y: 16))
+            tail.line(to: NSPoint(x: 0, y: 6))
+            tail.line(to: NSPoint(x: 2, y: 16))
+            tail.line(to: NSPoint(x: 0, y: 26))
+            tail.close()
+
+            NSColor.white.withAlphaComponent(0.95).setFill()
+            body.fill()
+            NSColor.white.withAlphaComponent(0.72).setFill()
+            tail.fill()
+            return image
+        }
+
         private func resolveSecurityScopedURL(from bookmarkData: Data) -> URL? {
             guard bookmarkData.isEmpty == false else { return nil }
             var isStale = false
@@ -2882,6 +3549,668 @@ struct MetalPreviewView: NSViewRepresentable {
             }
             _ = url.startAccessingSecurityScopedResource()
             return url
+        }
+
+        private func gaussianSplatBuffer(for pass: PreviewScene3DGaussianSplatPass) -> (buffer: MTLBuffer, count: Int)? {
+            guard let device else { return nil }
+            let settings = pass.settings
+            guard settings.bookmarkData.isEmpty == false || settings.panoramaImageData.isEmpty == false else {
+                GaussianSplatLoadProgressStore.shared.update(
+                    nodeID: pass.nodeID,
+                    isLoading: false,
+                    progress: 0.0,
+                    message: "No splat loaded"
+                )
+                return nil
+            }
+            let assetSignature = gaussianSplatAssetSignature(for: settings)
+            let sortSignature = gaussianSplatSortSignature(for: settings)
+            if let cached = Self.gaussianSplatBuffers[pass.nodeID],
+               cached.assetSignature == assetSignature,
+               cached.sortSignature == sortSignature {
+                GaussianSplatLoadProgressStore.shared.update(
+                    nodeID: pass.nodeID,
+                    isLoading: false,
+                    progress: 1.0,
+                    message: "Ready"
+                )
+                return (cached.buffer, cached.count)
+            }
+
+            let nodeID = pass.nodeID
+            let jobSignature = "\(assetSignature)|\(sortSignature)"
+            if Self.gaussianSplatLoadJobs[nodeID] != nil {
+                if let cached = Self.gaussianSplatBuffers[nodeID],
+                   cached.assetSignature == assetSignature {
+                    GaussianSplatLoadProgressStore.shared.update(
+                        nodeID: nodeID,
+                        isLoading: false,
+                        progress: 1.0,
+                        message: "Updating splats..."
+                    )
+                    return (cached.buffer, cached.count)
+                }
+                return nil
+            }
+
+            if Self.gaussianSplatLoadJobs[nodeID] != jobSignature {
+                let cachedVertices = Self.gaussianSplatBuffers[nodeID]?.assetSignature == assetSignature
+                    ? Self.gaussianSplatBuffers[nodeID]?.vertices
+                    : nil
+                let url = cachedVertices == nil ? resolveSecurityScopedURL(from: settings.bookmarkData) : nil
+                Self.gaussianSplatLoadJobs[nodeID] = jobSignature
+                GaussianSplatLoadProgressStore.shared.update(
+                    nodeID: nodeID,
+                    isLoading: cachedVertices == nil,
+                    progress: cachedVertices == nil ? 0.05 : 1.0,
+                    message: cachedVertices == nil ? "Loading splat..." : "Resorting view..."
+                )
+                DispatchQueue.global(qos: .utility).async { [settings, assetSignature, sortSignature, jobSignature, nodeID, cachedVertices, url, device] in
+                    let vertices: [GaussianSplatVertexGPU]
+                    let isResortOnly = cachedVertices != nil
+                    if let cachedVertices {
+                        GaussianSplatLoadProgressStore.shared.update(
+                            nodeID: nodeID,
+                            isLoading: false,
+                            progress: 1.0,
+                            message: "Resorting view..."
+                        )
+                        vertices = cachedVertices
+                    } else if settings.panoramaImageData.isEmpty == false,
+                              let loadedVertices = Self.loadPanoramaPseudoSplat(
+                                  from: settings.panoramaImageData,
+                                  depthImageData: settings.panoramaDepthImageData,
+                                  settings: settings
+                              ),
+                              loadedVertices.isEmpty == false {
+                        GaussianSplatLoadProgressStore.shared.update(
+                            nodeID: nodeID,
+                            isLoading: true,
+                            progress: 0.45,
+                            message: "Built panorama splats..."
+                        )
+                        vertices = loadedVertices
+                    } else if let url,
+                              let loadedVertices = Self.loadGaussianSplatPLY(from: url, settings: settings),
+                              loadedVertices.isEmpty == false {
+                        GaussianSplatLoadProgressStore.shared.update(
+                            nodeID: nodeID,
+                            isLoading: true,
+                            progress: 0.45,
+                            message: "Loaded PLY splats..."
+                        )
+                        vertices = loadedVertices
+                    } else {
+                        DispatchQueue.main.async {
+                            if Self.gaussianSplatLoadJobs[nodeID] == jobSignature {
+                                Self.gaussianSplatLoadJobs[nodeID] = nil
+                            }
+                            GaussianSplatLoadProgressStore.shared.update(
+                                nodeID: nodeID,
+                                isLoading: false,
+                                progress: 0.0,
+                                message: "Load failed"
+                            )
+                        }
+                        return
+                    }
+
+                    GaussianSplatLoadProgressStore.shared.update(
+                        nodeID: nodeID,
+                        isLoading: isResortOnly == false,
+                        progress: isResortOnly ? 1.0 : 0.65,
+                        message: isResortOnly ? "Resorting view..." : "Sorting splats..."
+                    )
+                    let sortedVertices = Self.gaussianSplatDepthSortedVertices(vertices, settings: settings)
+                    GaussianSplatLoadProgressStore.shared.update(
+                        nodeID: nodeID,
+                        isLoading: isResortOnly == false,
+                        progress: isResortOnly ? 1.0 : 0.85,
+                        message: isResortOnly ? "Updating view..." : "Uploading splats..."
+                    )
+                    guard let buffer = device.makeBuffer(
+                        bytes: sortedVertices,
+                        length: MemoryLayout<GaussianSplatVertexGPU>.stride * sortedVertices.count,
+                        options: .storageModeShared
+                    ) else {
+                        DispatchQueue.main.async {
+                            if Self.gaussianSplatLoadJobs[nodeID] == jobSignature {
+                                Self.gaussianSplatLoadJobs[nodeID] = nil
+                            }
+                            GaussianSplatLoadProgressStore.shared.update(
+                                nodeID: nodeID,
+                                isLoading: false,
+                                progress: 0.0,
+                                message: "Upload failed"
+                            )
+                        }
+                        return
+                    }
+
+                    DispatchQueue.main.async { [weak self] in
+                        guard Self.gaussianSplatLoadJobs[nodeID] == jobSignature else { return }
+                        Self.gaussianSplatBuffers[nodeID] = GaussianSplatBufferCache(
+                            assetSignature: assetSignature,
+                            sortSignature: sortSignature,
+                            vertices: vertices,
+                            buffer: buffer,
+                            count: sortedVertices.count
+                        )
+                        Self.gaussianSplatLoadJobs[nodeID] = nil
+                        GaussianSplatLoadProgressStore.shared.update(
+                            nodeID: nodeID,
+                            isLoading: false,
+                            progress: 1.0,
+                            message: "Ready"
+                        )
+                        self?.view?.setNeedsDisplay(self?.view?.bounds ?? .zero)
+                    }
+                }
+            }
+
+            if let cached = Self.gaussianSplatBuffers[nodeID],
+               cached.assetSignature == assetSignature {
+                return (cached.buffer, cached.count)
+            }
+            return nil
+        }
+
+        private func gaussianSplatAssetSignature(for settings: Scene3DGaussianSplatNodeSettings) -> String {
+            [
+                settings.filename,
+                dataSignature(settings.bookmarkData),
+                dataSignature(settings.panoramaImageData),
+                dataSignature(settings.panoramaDepthImageData),
+                "\(Int(settings.maxSplats.rounded()))",
+                "\(settings.panoramaRadius)",
+                "\(settings.panoramaDepthScale)",
+                "\(settings.autoCenter)",
+                "\(settings.autoScale)"
+            ].joined(separator: ":")
+        }
+
+        private func dataSignature(_ data: Data) -> String {
+            guard data.isEmpty == false else { return "0:0" }
+
+            var hash: UInt64 = 1469598103934665603
+            let sampleStride = max(1, data.count / 4096)
+            data.withUnsafeBytes { rawBuffer in
+                guard let bytes = rawBuffer.bindMemory(to: UInt8.self).baseAddress else { return }
+
+                var index = 0
+                while index < data.count {
+                    hash ^= UInt64(bytes[index])
+                    hash &*= 1099511628211
+                    index += sampleStride
+                }
+
+                let tailStart = max(0, data.count - min(data.count, 256))
+                for tailIndex in tailStart..<data.count {
+                    hash ^= UInt64(bytes[tailIndex])
+                    hash &*= 1099511628211
+                }
+            }
+            return "\(data.count):\(hash)"
+        }
+
+        private func gaussianSplatSortSignature(for settings: Scene3DGaussianSplatNodeSettings) -> String {
+            // Only camera/object rotations change draw ordering. Distance, pan, position,
+            // and positive scale are uniform transforms that do not change relative depth,
+            // so keeping them out prevents expensive 750k+ CPU resorts while animating.
+            [
+                settings.rotationX,
+                settings.rotationY,
+                settings.rotationZ,
+                settings.cameraOrbit,
+                settings.cameraPitch
+            ]
+            .map { String(format: "%.0f", $0.rounded()) }
+            .joined(separator: ":")
+        }
+
+        nonisolated private static func gaussianSplatDepthSortedVertices(
+            _ vertices: [GaussianSplatVertexGPU],
+            settings: Scene3DGaussianSplatNodeSettings
+        ) -> [GaussianSplatVertexGPU] {
+            let scale = Float(max(0.001, settings.scale))
+            let position = SIMD3<Float>(
+                Float(settings.positionX),
+                Float(settings.positionY),
+                Float(settings.positionZ)
+            )
+            let rotationRadians = SIMD3<Float>(
+                Float(settings.rotationX * .pi / 180.0),
+                Float(settings.rotationY * .pi / 180.0),
+                Float(settings.rotationZ * .pi / 180.0)
+            )
+            let cameraOrbitRadians = Float(settings.cameraOrbit * .pi / 180.0)
+            let cameraPitchRadians = Float(settings.cameraPitch * .pi / 180.0)
+            let cameraDistance = Float(settings.cameraDistance)
+
+            return vertices
+                .map { vertex in
+                    (
+                        vertex: vertex,
+                        depth: gaussianSplatDepth(
+                            for: vertex,
+                            scale: scale,
+                            position: position,
+                            rotationRadians: rotationRadians,
+                            cameraOrbitRadians: cameraOrbitRadians,
+                            cameraPitchRadians: cameraPitchRadians,
+                            cameraDistance: cameraDistance
+                        )
+                    )
+                }
+                .sorted { $0.depth > $1.depth }
+                .map(\.vertex)
+        }
+
+        nonisolated private static func gaussianSplatDepth(
+            for vertex: GaussianSplatVertexGPU,
+            scale: Float,
+            position: SIMD3<Float>,
+            rotationRadians: SIMD3<Float>,
+            cameraOrbitRadians: Float,
+            cameraPitchRadians: Float,
+            cameraDistance: Float
+        ) -> Float {
+            var p = SIMD3<Float>(vertex.position.x, vertex.position.y, vertex.position.z) * scale
+            p += position
+            p = rotateGaussianSplatX(p, rotationRadians.x)
+            p = rotateGaussianSplatY(p, rotationRadians.y)
+            p = rotateGaussianSplatZ(p, rotationRadians.z)
+            p = rotateGaussianSplatY(p, cameraOrbitRadians)
+            p = rotateGaussianSplatX(p, cameraPitchRadians)
+            return p.z + cameraDistance
+        }
+
+        nonisolated private static func rotateGaussianSplatX(_ p: SIMD3<Float>, _ angle: Float) -> SIMD3<Float> {
+            let s = sin(angle)
+            let c = cos(angle)
+            return SIMD3<Float>(p.x, p.y * c - p.z * s, p.y * s + p.z * c)
+        }
+
+        nonisolated private static func rotateGaussianSplatY(_ p: SIMD3<Float>, _ angle: Float) -> SIMD3<Float> {
+            let s = sin(angle)
+            let c = cos(angle)
+            return SIMD3<Float>(p.x * c + p.z * s, p.y, -p.x * s + p.z * c)
+        }
+
+        nonisolated private static func rotateGaussianSplatZ(_ p: SIMD3<Float>, _ angle: Float) -> SIMD3<Float> {
+            let s = sin(angle)
+            let c = cos(angle)
+            return SIMD3<Float>(p.x * c - p.y * s, p.x * s + p.y * c, p.z)
+        }
+
+        private struct RawRGBAImage: Sendable {
+            let width: Int
+            let height: Int
+            let bytes: [UInt8]
+
+            nonisolated init?(data: Data) {
+                guard
+                    let source = CGImageSourceCreateWithData(data as CFData, nil),
+                    let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                else {
+                    return nil
+                }
+
+                let width = image.width
+                let height = image.height
+                guard width > 0, height > 0 else { return nil }
+
+                var bytes = [UInt8](repeating: 0, count: width * height * 4)
+                let colorSpace = CGColorSpaceCreateDeviceRGB()
+                let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+                guard let context = CGContext(
+                    data: &bytes,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width * 4,
+                    space: colorSpace,
+                    bitmapInfo: bitmapInfo
+                ) else {
+                    return nil
+                }
+
+                context.interpolationQuality = .none
+                context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+                self.width = width
+                self.height = height
+                self.bytes = bytes
+            }
+
+            nonisolated func colorAt(x: Int, y: Int) -> (r: Float, g: Float, b: Float, a: Float)? {
+                guard x >= 0, y >= 0, x < width, y < height else { return nil }
+                let offset = ((y * width) + x) * 4
+                guard offset + 3 < bytes.count else { return nil }
+                return (
+                    Float(bytes[offset]) / 255.0,
+                    Float(bytes[offset + 1]) / 255.0,
+                    Float(bytes[offset + 2]) / 255.0,
+                    Float(bytes[offset + 3]) / 255.0
+                )
+            }
+        }
+
+        nonisolated private static func loadPanoramaPseudoSplat(
+            from imageData: Data,
+            depthImageData: Data,
+            settings: Scene3DGaussianSplatNodeSettings
+        ) -> [GaussianSplatVertexGPU]? {
+            guard let bitmap = RawRGBAImage(data: imageData) else { return nil }
+
+            let width = bitmap.width
+            let height = bitmap.height
+            guard width > 1, height > 1 else { return nil }
+            let depthBitmap = depthImageData.isEmpty ? nil : RawRGBAImage(data: depthImageData)
+
+            let maxSplats = max(1, Int(settings.maxSplats.rounded()))
+            let radius = Float(max(0.01, settings.panoramaRadius))
+            let depthScale = Float(max(0.0, settings.panoramaDepthScale))
+            var vertices: [GaussianSplatVertexGPU] = []
+            vertices.reserveCapacity(maxSplats)
+
+            func sampleColor(direction: SIMD3<Float>) -> (r: Float, g: Float, b: Float, a: Float)? {
+                let normalized = simd_normalize(direction)
+                let longitude = atan2(normalized.x, normalized.z)
+                let latitude = asin(max(-1.0, min(1.0, normalized.y)))
+                let u = (longitude / (2.0 * .pi)) + 0.5
+                let v = 0.5 - (latitude / .pi)
+                let x = min(width - 1, max(0, Int((u - floor(u)) * Float(width - 1))))
+                let y = min(height - 1, max(0, Int(v * Float(height - 1))))
+                return bitmap.colorAt(x: x, y: y)
+            }
+
+            func equirectangularUV(for direction: SIMD3<Float>) -> SIMD2<Float> {
+                let normalized = simd_normalize(direction)
+                let longitude = atan2(normalized.x, normalized.z)
+                let latitude = asin(max(-1.0, min(1.0, normalized.y)))
+                return SIMD2<Float>(
+                    (longitude / (2.0 * .pi)) + 0.5,
+                    0.5 - (latitude / .pi)
+                )
+            }
+
+            func sampleDepth(direction: SIMD3<Float>) -> Float? {
+                guard let depthBitmap else { return nil }
+                let uv = equirectangularUV(for: direction)
+                let depthWidth = depthBitmap.width
+                let depthHeight = depthBitmap.height
+                guard depthWidth > 1, depthHeight > 1 else { return nil }
+                let x = min(depthWidth - 1, max(0, Int((uv.x - floor(uv.x)) * Float(depthWidth - 1))))
+                let y = min(depthHeight - 1, max(0, Int(uv.y * Float(depthHeight - 1))))
+                guard let color = depthBitmap.colorAt(x: x, y: y) else { return nil }
+                let depth = color.r * 0.299 + color.g * 0.587 + color.b * 0.114
+                return max(0.0, min(1.0, depth))
+            }
+
+            let faceCount = 6
+            let gridSize = max(8, Int(sqrt(Double(maxSplats) / Double(faceCount))))
+            let step = gridSize > 1 ? 2.0 / Float(gridSize - 1) : 2.0
+            let faceScale = radius
+            let splatScale = max(0.004, faceScale * step * 0.42)
+
+            for face in 0..<faceCount {
+                for yIndex in 0..<gridSize {
+                    guard vertices.count < maxSplats else { break }
+                    let rowJitter = (yIndex % 2 == 0) ? step * 0.25 : -step * 0.25
+                    let yPlane = -1.0 + Float(yIndex) * step
+
+                    for xIndex in 0..<gridSize {
+                        guard vertices.count < maxSplats else { break }
+                        let xPlane = -1.0 + Float(xIndex) * step + rowJitter
+                        let clampedX = max(-1.0, min(1.0, xPlane))
+
+                        let cubePoint: SIMD3<Float>
+                        switch face {
+                        case 0:
+                            cubePoint = SIMD3<Float>(clampedX, yPlane, 1.0)
+                        case 1:
+                            cubePoint = SIMD3<Float>(-clampedX, yPlane, -1.0)
+                        case 2:
+                            cubePoint = SIMD3<Float>(-1.0, yPlane, clampedX)
+                        case 3:
+                            cubePoint = SIMD3<Float>(1.0, yPlane, -clampedX)
+                        case 4:
+                            cubePoint = SIMD3<Float>(clampedX, 1.0, -yPlane)
+                        default:
+                            cubePoint = SIMD3<Float>(clampedX, -1.0, yPlane)
+                        }
+
+                        guard let color = sampleColor(direction: cubePoint) else {
+                            continue
+                        }
+
+                        let r = color.r
+                        let g = color.g
+                        let b = color.b
+                        let a = color.a
+                        let luma = r * 0.299 + g * 0.587 + b * 0.114
+                        let maxChannel = max(r, max(g, b))
+                        let minChannel = min(r, min(g, b))
+                        let saturation = maxChannel > 0.0001 ? (maxChannel - minChannel) / maxChannel : 0.0
+                        let horizonWeight = 1.0 - min(abs(cubePoint.y) * 0.85, 1.0)
+                        let waterHaze = min(max((b + g) * 0.5 - r * 0.35, 0.0), 1.0)
+                        let heuristicDepth = 0.25
+                            + 0.35 * horizonWeight
+                            + 0.25 * (1.0 - saturation)
+                            + 0.15 * waterHaze
+                            + 0.10 * luma
+                        let depth = sampleDepth(direction: cubePoint) ?? heuristicDepth
+                        let depthStrength: Float = depthBitmap == nil ? 0.06 : 0.16
+                        let inwardDepth = min(0.65, depthScale * depthStrength * depth)
+                        let direction = simd_normalize(cubePoint)
+                        let position = (cubePoint * faceScale) - (direction * faceScale * inwardDepth)
+
+                        vertices.append(GaussianSplatVertexGPU(
+                            position: SIMD4<Float>(position.x, position.y, position.z, 1.0),
+                            color: SIMD4<Float>(r, g, b, max(0.05, a)),
+                            scale: SIMD4<Float>(splatScale, splatScale, splatScale, 0.0),
+                            rotation: SIMD4<Float>(1.0, 0.0, 0.0, 0.0)
+                        ))
+                    }
+                }
+            }
+
+            return vertices
+        }
+
+        nonisolated private static func loadGaussianSplatPLY(from url: URL, settings: Scene3DGaussianSplatNodeSettings) -> [GaussianSplatVertexGPU]? {
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            guard let headerRange = data.range(of: Data("end_header\n".utf8)) ?? data.range(of: Data("end_header\r\n".utf8)) else { return nil }
+            guard let header = String(data: data[..<headerRange.upperBound], encoding: .utf8) else { return nil }
+            let lines = header.components(separatedBy: .newlines)
+            let isASCII = lines.contains { $0.contains("format ascii") }
+            let isBinaryLittleEndian = lines.contains { $0.contains("format binary_little_endian") }
+            guard isASCII || isBinaryLittleEndian else { return nil }
+
+            var vertexCount = 0
+            var properties: [(name: String, type: String)] = []
+            var readingVertex = false
+            for line in lines {
+                let parts = line.split(separator: " ").map(String.init)
+                guard parts.isEmpty == false else { continue }
+                if parts.count >= 3, parts[0] == "element", parts[1] == "vertex" {
+                    vertexCount = Int(parts[2]) ?? 0
+                    readingVertex = true
+                    continue
+                }
+                if parts.count >= 2, parts[0] == "element", parts[1] != "vertex" {
+                    readingVertex = false
+                    continue
+                }
+                if readingVertex, parts.count >= 3, parts[0] == "property", parts[1] != "list" {
+                    properties.append((parts[2], parts[1]))
+                }
+            }
+            guard vertexCount > 0, properties.isEmpty == false else { return nil }
+
+            let maxSplats = min(vertexCount, max(1, Int(settings.maxSplats.rounded())))
+            var vertices: [GaussianSplatVertexGPU] = []
+            vertices.reserveCapacity(maxSplats)
+
+            func sampledPLYIndex(_ sample: Int) -> Int {
+                guard maxSplats < vertexCount else { return sample }
+                let fraction = Double(sample) / Double(maxSplats)
+                return min(vertexCount - 1, Int((fraction * Double(vertexCount)).rounded(.down)))
+            }
+
+            if isASCII {
+                guard let body = String(data: data[headerRange.upperBound...], encoding: .utf8) else { return nil }
+                var sample = 0
+                var nextIndex = sampledPLYIndex(sample)
+                for (index, line) in body.components(separatedBy: .newlines).enumerated() where index < vertexCount {
+                    guard index == nextIndex else { continue }
+                    let values = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map { Float($0) ?? 0 }
+                    if let vertex = gaussianSplatVertex(from: values, properties: properties) {
+                        vertices.append(vertex)
+                    }
+                    sample += 1
+                    guard sample < maxSplats else { break }
+                    nextIndex = sampledPLYIndex(sample)
+                }
+            } else {
+                let rowStride = properties.reduce(0) { $0 + plyByteSize(for: $1.type) }
+                guard rowStride > 0, data.count >= headerRange.upperBound + rowStride * vertexCount else { return nil }
+                for sample in 0..<maxSplats {
+                    let index = sampledPLYIndex(sample)
+                    var offset = headerRange.upperBound + index * rowStride
+                    var values: [Float] = []
+                    values.reserveCapacity(properties.count)
+                    for property in properties {
+                        values.append(readPLYScalar(data: data, offset: offset, type: property.type))
+                        offset += plyByteSize(for: property.type)
+                    }
+                    if let vertex = gaussianSplatVertex(from: values, properties: properties) {
+                        vertices.append(vertex)
+                    }
+                }
+            }
+
+            if settings.autoCenter || settings.autoScale {
+                normalizeGaussianSplatVertices(&vertices, autoCenter: settings.autoCenter, autoScale: settings.autoScale)
+            }
+            return vertices
+        }
+
+        nonisolated private static func gaussianSplatVertex(from values: [Float], properties: [(name: String, type: String)]) -> GaussianSplatVertexGPU? {
+            func value(_ name: String) -> Float? {
+                guard let index = properties.firstIndex(where: { $0.name == name }), values.indices.contains(index) else { return nil }
+                return values[index]
+            }
+            guard let x = value("x"), let y = value("y"), let z = value("z") else { return nil }
+            let shScale: Float = 0.2820947918
+            let r = value("red").map { min(max($0 / 255.0, 0.0), 1.0) } ?? min(max(0.5 + shScale * (value("f_dc_0") ?? 1.5), 0.0), 1.0)
+            let g = value("green").map { min(max($0 / 255.0, 0.0), 1.0) } ?? min(max(0.5 + shScale * (value("f_dc_1") ?? 1.5), 0.0), 1.0)
+            let b = value("blue").map { min(max($0 / 255.0, 0.0), 1.0) } ?? min(max(0.5 + shScale * (value("f_dc_2") ?? 1.5), 0.0), 1.0)
+            let alpha = value("opacity").map { 1.0 / (1.0 + exp(-$0)) } ?? 1.0
+            let sx = value("scale_0").map { min(max(exp($0), 0.0001), 0.25) } ?? 0.01
+            let sy = value("scale_1").map { min(max(exp($0), 0.0001), 0.25) } ?? sx
+            let sz = value("scale_2").map { min(max(exp($0), 0.0001), 0.25) } ?? sx
+            let qw = value("rot_0") ?? 1.0
+            let qx = value("rot_1") ?? 0.0
+            let qy = value("rot_2") ?? 0.0
+            let qz = value("rot_3") ?? 0.0
+            return GaussianSplatVertexGPU(
+                position: SIMD4<Float>(x, y, z, 1.0),
+                color: SIMD4<Float>(r, g, b, min(max(alpha, 0.02), 1.0)),
+                scale: SIMD4<Float>(sx, sy, sz, 0.0),
+                rotation: SIMD4<Float>(qw, qx, qy, qz)
+            )
+        }
+
+        nonisolated private static func normalizeGaussianSplatVertices(_ vertices: inout [GaussianSplatVertexGPU], autoCenter: Bool, autoScale: Bool) {
+            guard vertices.isEmpty == false else { return }
+            var minP = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var maxP = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            for vertex in vertices {
+                let p = SIMD3<Float>(vertex.position.x, vertex.position.y, vertex.position.z)
+                minP = simd.min(minP, p)
+                maxP = simd.max(maxP, p)
+            }
+            let center = (minP + maxP) * 0.5
+            let extent = max(maxP.x - minP.x, max(maxP.y - minP.y, maxP.z - minP.z))
+            let normalizationScale: Float = autoScale ? (2.0 / max(extent, 0.0001)) : 1.0
+            for index in vertices.indices {
+                var p = SIMD3<Float>(vertices[index].position.x, vertices[index].position.y, vertices[index].position.z)
+                if autoCenter { p -= center }
+                p *= normalizationScale
+                vertices[index].position.x = p.x
+                vertices[index].position.y = p.y
+                vertices[index].position.z = p.z
+                vertices[index].scale.x *= normalizationScale
+                vertices[index].scale.y *= normalizationScale
+                vertices[index].scale.z *= normalizationScale
+            }
+        }
+
+        nonisolated private static func plyByteSize(for type: String) -> Int {
+            switch type {
+            case "char", "uchar", "int8", "uint8": return 1
+            case "short", "ushort", "int16", "uint16": return 2
+            case "int", "uint", "float", "int32", "uint32", "float32": return 4
+            case "double", "float64": return 8
+            default: return 4
+            }
+        }
+
+        nonisolated private static func readPLYScalar(data: Data, offset: Int, type: String) -> Float {
+            switch type {
+            case "char", "int8":
+                guard let value = readPLYUInt8(data: data, offset: offset) else { return 0 }
+                return Float(Int8(bitPattern: value))
+            case "uchar", "uint8":
+                guard let value = readPLYUInt8(data: data, offset: offset) else { return 0 }
+                return Float(value)
+            case "short", "int16":
+                guard let value = readPLYUInt16(data: data, offset: offset) else { return 0 }
+                return Float(Int16(bitPattern: value))
+            case "ushort", "uint16":
+                guard let value = readPLYUInt16(data: data, offset: offset) else { return 0 }
+                return Float(value)
+            case "int", "int32":
+                guard let value = readPLYUInt32(data: data, offset: offset) else { return 0 }
+                return Float(Int32(bitPattern: value))
+            case "uint", "uint32":
+                guard let value = readPLYUInt32(data: data, offset: offset) else { return 0 }
+                return Float(value)
+            case "double", "float64":
+                guard let value = readPLYUInt64(data: data, offset: offset) else { return 0 }
+                return Float(Double(bitPattern: value))
+            default:
+                guard let value = readPLYUInt32(data: data, offset: offset) else { return 0 }
+                return Float(bitPattern: value)
+            }
+        }
+
+        nonisolated private static func readPLYUInt8(data: Data, offset: Int) -> UInt8? {
+            guard offset >= 0, offset < data.count else { return nil }
+            return data[offset]
+        }
+
+        nonisolated private static func readPLYUInt16(data: Data, offset: Int) -> UInt16? {
+            guard offset >= 0, offset + 1 < data.count else { return nil }
+            return UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+        }
+
+        nonisolated private static func readPLYUInt32(data: Data, offset: Int) -> UInt32? {
+            guard offset >= 0, offset + 3 < data.count else { return nil }
+            return UInt32(data[offset])
+                | (UInt32(data[offset + 1]) << 8)
+                | (UInt32(data[offset + 2]) << 16)
+                | (UInt32(data[offset + 3]) << 24)
+        }
+
+        nonisolated private static func readPLYUInt64(data: Data, offset: Int) -> UInt64? {
+            guard offset >= 0, offset + 7 < data.count else { return nil }
+            var value: UInt64 = 0
+            for byteOffset in 0..<8 {
+                value |= UInt64(data[offset + byteOffset]) << UInt64(byteOffset * 8)
+            }
+            return value
         }
 
         private func normalizedModelNode(from sourceNode: SCNNode) -> SCNNode {
@@ -3427,11 +4756,13 @@ struct MetalPreviewView: NSViewRepresentable {
             case .scene3DText(let pass):
                 return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
             case .scene3DModel(let pass):
-                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.animationPlay):\(pass.settings.animationClipStart):\(pass.settings.animationClipEnd):\(pass.settings.animationSpeed):\(pass.settings.animationLoops):\(signature(for: pass.materialMaps))"
+                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+            case .scene3DGaussianSplat(let pass):
+                return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .scene3DParticle(let pass):
                 return "scene3dparticle:\(pass.nodeID.uuidString):\(pass.spriteSource.map(signature(for:)) ?? "default")"
             case .scene3DRender(let pass):
-                return "scene3drender:\(pass.nodeID.uuidString):\(pass.sources.map(signature(for:)).joined(separator: ":")):\(pass.cameraDistance):\(pass.cameraOrbit):\(pass.cameraPitch):\(pass.cameraPanX):\(pass.cameraPanY):\(pass.backgroundAlpha):\(pass.defaultLightIntensity)"
+                return "scene3drender:\(pass.nodeID.uuidString):\(pass.sources.map(signature(for:)).joined(separator: ":"))"
             case .transition(let pass):
                 return "transition:\(pass.style.rawValue):\(signature(for: pass.primary)):\(signature(for: pass.secondary))"
             case .layers(let layers, _):
@@ -3473,13 +4804,15 @@ struct MetalPreviewView: NSViewRepresentable {
             case .scene3DText(let pass):
                 return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
             case .scene3DModel(let pass):
-                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.animationPlay):\(pass.settings.animationClipStart):\(pass.settings.animationClipEnd):\(pass.settings.animationSpeed):\(pass.settings.animationLoops):\(signature(for: pass.materialMaps))"
+                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+            case .scene3DGaussianSplat(let pass):
+                return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .scene3DParticle(let pass):
                 return "scene3dparticle:\(pass.nodeID.uuidString):\(pass.spriteSource.map(signature(for:)) ?? "default")"
             case .scene3DSource(let source):
                 return "scene3dsource:\(signature(for: source))"
             case .scene3DRender(let pass):
-                return "scene3drender:\(pass.nodeID.uuidString):\(pass.sources.map(signature(for:)).joined(separator: ":")):\(pass.cameraDistance):\(pass.cameraOrbit):\(pass.cameraPitch):\(pass.cameraPanX):\(pass.cameraPanY):\(pass.backgroundAlpha):\(pass.defaultLightIntensity)"
+                return "scene3drender:\(pass.nodeID.uuidString):\(pass.sources.map(signature(for:)).joined(separator: ":"))"
             case .transition(let pass):
                 return "transition:\(pass.style.rawValue):\(signature(for: pass.primary)):\(signature(for: pass.secondary))"
             case .layers(let layers, _):
@@ -3498,7 +4831,9 @@ struct MetalPreviewView: NSViewRepresentable {
             case .text(let pass):
                 return "text:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
             case .model(let pass):
-                return "model:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.animationPlay):\(pass.settings.animationClipStart):\(pass.settings.animationClipEnd):\(pass.settings.animationSpeed):\(pass.settings.animationLoops):\(signature(for: pass.materialMaps))"
+                return "model:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+            case .gaussianSplat(let pass):
+                return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .particle(let pass):
                 return "particle:\(pass.nodeID.uuidString):\(pass.spriteSource.map(signature(for:)) ?? "default")"
             case .light(let pass):
@@ -3506,17 +4841,17 @@ struct MetalPreviewView: NSViewRepresentable {
             case .transform(
                 let nodeID,
                 let child,
-                let x,
-                let y,
-                let z,
-                let scaleX,
-                let scaleY,
-                let scaleZ,
-                let rotationDegreesX,
-                let rotationDegreesY,
-                let rotationDegreesZ
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _,
+                _
             ):
-                return "transform:\(nodeID.uuidString):\(signature(for: child)):\(x):\(y):\(z):\(scaleX):\(scaleY):\(scaleZ):\(rotationDegreesX):\(rotationDegreesY):\(rotationDegreesZ)"
+                return "transform:\(nodeID.uuidString):\(signature(for: child))"
             }
         }
 
@@ -3889,6 +5224,220 @@ struct MetalPreviewView: NSViewRepresentable {
         }
         """
 
+        private static let gaussianSplatShaderSource = """
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct GaussianSplatVertexGPU {
+            float4 position;
+            float4 color;
+            float4 scale;
+            float4 rotation;
+        };
+
+        struct GaussianSplatUniformsGPU {
+            float2 resolution;
+            float3 position;
+            float scale;
+            float3 rotationRadians;
+            float cameraDistance;
+            float cameraOrbitRadians;
+            float cameraPitchRadians;
+            float2 cameraPan;
+            float pointSize;
+            float opacity;
+            float explode;
+            float chaos;
+            float particleSpeed;
+            float particleGravity;
+            float particleTurbulence;
+            float particleBoundary;
+            float time;
+            float isPanorama;
+        };
+
+        struct GaussianSplatVertexOut {
+            float4 position [[position]];
+            float4 color;
+            float2 localUV;
+        };
+
+        float3 rotateX(float3 p, float angle) {
+            float s = sin(angle);
+            float c = cos(angle);
+            return float3(p.x, p.y * c - p.z * s, p.y * s + p.z * c);
+        }
+
+        float3 rotateY(float3 p, float angle) {
+            float s = sin(angle);
+            float c = cos(angle);
+            return float3(p.x * c + p.z * s, p.y, -p.x * s + p.z * c);
+        }
+
+        float3 rotateZ(float3 p, float angle) {
+            float s = sin(angle);
+            float c = cos(angle);
+            return float3(p.x * c - p.y * s, p.x * s + p.y * c, p.z);
+        }
+
+        float3 quatRotate(float4 q, float3 v) {
+            q = normalize(q);
+            float3 u = q.yzw;
+            float s = q.x;
+            return 2.0 * dot(u, v) * u + (s * s - dot(u, u)) * v + 2.0 * s * cross(u, v);
+        }
+
+        float hash13(float3 p) {
+            p = fract(p * float3(0.1031, 0.11369, 0.13787));
+            p += dot(p, p.yzx + 19.19);
+            return fract((p.x + p.y) * p.z);
+        }
+
+        float3 randomDirection(float3 seed) {
+            float x = hash13(seed + 13.1) * 2.0 - 1.0;
+            float y = hash13(seed + 47.7) * 2.0 - 1.0;
+            float z = hash13(seed + 91.3) * 2.0 - 1.0;
+            return normalize(float3(x, y, z) + 0.0001);
+        }
+
+        float bounceAxis(float value, float limit) {
+            float span = max(limit * 2.0, 0.0001);
+            float wrapped = fmod(value + limit, span * 2.0);
+            if (wrapped < 0.0) {
+                wrapped += span * 2.0;
+            }
+            float mirrored = wrapped <= span ? wrapped : span * 2.0 - wrapped;
+            return mirrored - limit;
+        }
+
+        float3 bounceBox(float3 value, float3 halfExtents) {
+            return float3(
+                bounceAxis(value.x, halfExtents.x),
+                bounceAxis(value.y, halfExtents.y),
+                bounceAxis(value.z, halfExtents.z)
+            );
+        }
+
+        float3 applySceneRotation(float3 p, constant GaussianSplatUniformsGPU& uniforms) {
+            p = rotateX(p, uniforms.rotationRadians.x);
+            p = rotateY(p, uniforms.rotationRadians.y);
+            p = rotateZ(p, uniforms.rotationRadians.z);
+            p = rotateY(p, uniforms.cameraOrbitRadians);
+            p = rotateX(p, uniforms.cameraPitchRadians);
+            return p;
+        }
+
+        float2 projectClip(float3 p, constant GaussianSplatUniformsGPU& uniforms) {
+            float viewZ = p.z + uniforms.cameraDistance;
+            float nearPlane = mix(0.05, 1.25, uniforms.isPanorama);
+            float aspect = uniforms.resolution.x / max(uniforms.resolution.y, 1.0);
+            return float2((p.x / max(viewZ, nearPlane)) / aspect, p.y / max(viewZ, nearPlane));
+        }
+
+        vertex GaussianSplatVertexOut gaussianSplatVertex(
+            uint vertexID [[vertex_id]],
+            uint instanceID [[instance_id]],
+            constant GaussianSplatVertexGPU* vertices [[buffer(0)]],
+            constant GaussianSplatUniformsGPU& uniforms [[buffer(1)]]
+        ) {
+            GaussianSplatVertexGPU splat = vertices[instanceID];
+            float3 p = splat.position.xyz * uniforms.scale;
+            float3 localP = p;
+            float3 radialDirection = normalize(localP + 0.0001);
+            float3 chaosDirection = randomDirection(splat.position.xyz);
+            float seed = hash13(splat.position.xyz);
+            float3 travelDirection = normalize(mix(radialDirection, chaosDirection, uniforms.chaos));
+            if (uniforms.explode > 0.0001) {
+                float speed = max(uniforms.particleSpeed, 0.0001);
+                float particleTime = uniforms.time * speed * 0.35 + seed * 9.0;
+                float strength = clamp(uniforms.explode / 100.0, 0.0, 1.0);
+                float3 tangent = normalize(cross(travelDirection, float3(0.0, 1.0, 0.0)) + randomDirection(splat.position.zyx) * 0.25 + 0.0001);
+                float swirl = sin(uniforms.time * (1.7 + seed * 2.0) + seed * 18.8496);
+                float bob = cos(uniforms.time * (1.2 + seed) + seed * 12.5664);
+                float3 turbulence = (tangent * swirl + randomDirection(splat.position.yxz) * bob) * uniforms.particleTurbulence * uniforms.chaos;
+                float3 velocity = (travelDirection * uniforms.particleBoundary * 0.45 + turbulence) * strength;
+                float3 moved = p + velocity * particleTime;
+                moved.y -= uniforms.particleGravity * particleTime * particleTime * 0.18 * strength;
+
+                float boxScale = mix(1.08, 1.35, strength);
+                float3 halfExtents = float3(uniforms.particleBoundary * boxScale);
+                p = bounceBox(moved, halfExtents);
+            }
+            p += uniforms.position;
+            p = applySceneRotation(p, uniforms);
+            p.xy += uniforms.cameraPan;
+
+            float3 axisX = quatRotate(splat.rotation, float3(splat.scale.x, 0.0, 0.0)) * uniforms.scale * uniforms.pointSize;
+            float3 axisY = quatRotate(splat.rotation, float3(0.0, splat.scale.y, 0.0)) * uniforms.scale * uniforms.pointSize;
+            float3 axisZ = quatRotate(splat.rotation, float3(0.0, 0.0, splat.scale.z)) * uniforms.scale * uniforms.pointSize;
+            axisX = applySceneRotation(axisX, uniforms);
+            axisY = applySceneRotation(axisY, uniforms);
+            axisZ = applySceneRotation(axisZ, uniforms);
+
+            float viewZ = p.z + uniforms.cameraDistance;
+            float nearPlane = mix(0.05, 1.25, uniforms.isPanorama);
+            if (viewZ <= nearPlane) {
+                GaussianSplatVertexOut out;
+                out.position = float4(3.0, 3.0, 1.0, 1.0);
+                out.color = float4(0.0);
+                out.localUV = float2(2.0);
+                return out;
+            }
+            float2 centerClip = projectClip(p, uniforms);
+            float2 projectedX = projectClip(p + axisX, uniforms) - centerClip;
+            float2 projectedY = projectClip(p + axisY, uniforms) - centerClip;
+            float2 projectedZ = projectClip(p + axisZ, uniforms) - centerClip;
+            float lx = dot(projectedX, projectedX);
+            float ly = dot(projectedY, projectedY);
+            float lz = dot(projectedZ, projectedZ);
+            float2 axisA = projectedX;
+            float2 axisB = projectedY;
+            if (ly > lx && ly >= lz) {
+                axisA = projectedY;
+                axisB = (lx > lz) ? projectedX : projectedZ;
+            } else if (lz > lx && lz > ly) {
+                axisA = projectedZ;
+                axisB = (lx > ly) ? projectedX : projectedY;
+            } else {
+                axisB = (ly > lz) ? projectedY : projectedZ;
+            }
+
+            float minPixels = mix(1.5, 4.0, uniforms.isPanorama);
+            float2 minAxis = float2(minPixels / max(uniforms.resolution.x, 1.0), minPixels / max(uniforms.resolution.y, 1.0));
+            if (length(axisA) < length(minAxis)) {
+                axisA = float2(minAxis.x, 0.0);
+            }
+            if (length(axisB) < length(minAxis)) {
+                axisB = float2(0.0, minAxis.y);
+            }
+
+            float2 corners[4] = {
+                float2(-1.0, -1.0),
+                float2( 1.0, -1.0),
+                float2(-1.0,  1.0),
+                float2( 1.0,  1.0)
+            };
+            float2 local = corners[vertexID];
+
+            GaussianSplatVertexOut out;
+            out.position = float4(centerClip + local.x * axisA * 2.5 + local.y * axisB * 2.5, clamp(viewZ / 200.0, 0.0, 1.0), 1.0);
+            out.color = float4(splat.color.rgb, splat.color.a * uniforms.opacity);
+            out.localUV = local;
+            return out;
+        }
+
+        fragment float4 gaussianSplatFragment(
+            GaussianSplatVertexOut in [[stage_in]]
+        ) {
+            float d = dot(in.localUV, in.localUV);
+            if (d > 1.0) {
+                discard_fragment();
+            }
+            float alpha = exp(-d * 2.8) * in.color.a;
+            return float4(in.color.rgb, alpha);
+        }
+        """
+
         private static let layerShaderSource = """
         #include <metal_stdlib>
         using namespace metal;
@@ -3983,6 +5532,14 @@ struct MetalPreviewView: NSViewRepresentable {
         ) {
             float4 current = currentTexture.sample(textureSampler, in.uv);
             float4 history = historyTexture.sample(textureSampler, in.uv);
+            bool currentIsFallback = current.r > 0.85 && current.g < 0.2 && current.b > 0.85;
+            bool historyIsFallback = history.r > 0.85 && history.g < 0.2 && history.b > 0.85;
+            if (historyIsFallback) {
+                history = float4(0.0);
+            }
+            if (currentIsFallback) {
+                current = history;
+            }
             float level = clamp(uniforms.level, 0.0, 0.999);
             float3 feedback = history.rgb * level;
             float3 result = current.rgb;

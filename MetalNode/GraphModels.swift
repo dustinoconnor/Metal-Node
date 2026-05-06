@@ -381,6 +381,27 @@ struct HoldNodeSettings: Equatable, Codable {
     var initialValue: Double = 0.0
 }
 
+enum ScalarSmoothMode: String, CaseIterable, Codable, Identifiable {
+    case smooth
+    case inertia
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .smooth: return "Smooth"
+        case .inertia: return "Inertia"
+        }
+    }
+}
+
+struct ScalarSmoothNodeSettings: Equatable, Codable {
+    var initialValue: Double = 0.0
+    var amount: Double = 0.18
+    var inertia: Double = 0.72
+    var mode: ScalarSmoothMode = .smooth
+}
+
 struct RandomNodeSettings: Equatable, Codable {
     var min: Double = 0.0
     var max: Double = 1.0
@@ -1149,6 +1170,113 @@ struct Scene3DModelNodeSettings: Equatable, Codable {
     var backgroundAlpha: Double = 0.0
 }
 
+struct Scene3DGaussianSplatNodeSettings: Equatable, Codable {
+    var filename: String = "Gaussian Splat"
+    var bookmarkData: Data = Data()
+    var panoramaImageData: Data = Data()
+    var panoramaDepthImageData: Data = Data()
+    var positionX: Double = 0.0
+    var positionY: Double = 0.0
+    var positionZ: Double = 0.0
+    var rotationX: Double = 0.0
+    var rotationY: Double = 0.0
+    var rotationZ: Double = 0.0
+    var scale: Double = 1.0
+    var cameraDistance: Double = 5.0
+    var cameraOrbit: Double = 0.0
+    var cameraPitch: Double = 0.0
+    var cameraPanX: Double = 0.0
+    var cameraPanY: Double = 0.0
+    var pointSize: Double = 1.0
+    var opacity: Double = 1.0
+    var explode: Double = 0.0
+    var chaos: Double = 0.0
+    var particleSpeed: Double = 0.8
+    var particleGravity: Double = 0.0
+    var particleTurbulence: Double = 0.25
+    var particleBoundary: Double = 25.0
+    var maxSplats: Double = 250_000.0
+    var panoramaRadius: Double = 2.0
+    var panoramaDepthScale: Double = 1.0
+    var autoCenter: Bool = true
+    var autoScale: Bool = true
+    var backgroundAlpha: Double = 0.0
+
+    init() {}
+
+    init(filename: String = "Gaussian Splat", bookmarkData: Data = Data()) {
+        self.filename = filename
+        self.bookmarkData = bookmarkData
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case filename
+        case bookmarkData
+        case panoramaImageData
+        case panoramaDepthImageData
+        case positionX
+        case positionY
+        case positionZ
+        case rotationX
+        case rotationY
+        case rotationZ
+        case scale
+        case cameraDistance
+        case cameraOrbit
+        case cameraPitch
+        case cameraPanX
+        case cameraPanY
+        case pointSize
+        case opacity
+        case explode
+        case chaos
+        case particleSpeed
+        case particleGravity
+        case particleTurbulence
+        case particleBoundary
+        case maxSplats
+        case panoramaRadius
+        case panoramaDepthScale
+        case autoCenter
+        case autoScale
+        case backgroundAlpha
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? "Gaussian Splat"
+        bookmarkData = try container.decodeIfPresent(Data.self, forKey: .bookmarkData) ?? Data()
+        panoramaImageData = try container.decodeIfPresent(Data.self, forKey: .panoramaImageData) ?? Data()
+        panoramaDepthImageData = try container.decodeIfPresent(Data.self, forKey: .panoramaDepthImageData) ?? Data()
+        positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? 0.0
+        positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? 0.0
+        positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? 0.0
+        rotationX = try container.decodeIfPresent(Double.self, forKey: .rotationX) ?? 0.0
+        rotationY = try container.decodeIfPresent(Double.self, forKey: .rotationY) ?? 0.0
+        rotationZ = try container.decodeIfPresent(Double.self, forKey: .rotationZ) ?? 0.0
+        scale = try container.decodeIfPresent(Double.self, forKey: .scale) ?? 1.0
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? 5.0
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? 0.0
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? 0.0
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? 0.0
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? 0.0
+        pointSize = try container.decodeIfPresent(Double.self, forKey: .pointSize) ?? 1.0
+        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1.0
+        explode = try container.decodeIfPresent(Double.self, forKey: .explode) ?? 0.0
+        chaos = try container.decodeIfPresent(Double.self, forKey: .chaos) ?? 0.0
+        particleSpeed = try container.decodeIfPresent(Double.self, forKey: .particleSpeed) ?? 0.8
+        particleGravity = try container.decodeIfPresent(Double.self, forKey: .particleGravity) ?? 0.0
+        particleTurbulence = try container.decodeIfPresent(Double.self, forKey: .particleTurbulence) ?? 0.25
+        particleBoundary = try container.decodeIfPresent(Double.self, forKey: .particleBoundary) ?? 25.0
+        maxSplats = try container.decodeIfPresent(Double.self, forKey: .maxSplats) ?? 250_000.0
+        panoramaRadius = try container.decodeIfPresent(Double.self, forKey: .panoramaRadius) ?? 2.0
+        panoramaDepthScale = try container.decodeIfPresent(Double.self, forKey: .panoramaDepthScale) ?? 1.0
+        autoCenter = try container.decodeIfPresent(Bool.self, forKey: .autoCenter) ?? true
+        autoScale = try container.decodeIfPresent(Bool.self, forKey: .autoScale) ?? true
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? 0.0
+    }
+}
+
 enum Scene3DParticleShape: String, CaseIterable, Codable, Identifiable {
     case point
     case sphere
@@ -1181,9 +1309,26 @@ enum Scene3DParticleBlendMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum Scene3DParticleSpriteStyle: String, CaseIterable, Codable, Identifiable {
+    case glow
+    case fish
+    case dust
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .glow: return "Glow"
+        case .fish: return "Fish"
+        case .dust: return "Dust"
+        }
+    }
+}
+
 struct Scene3DParticleNodeSettings: Equatable, Codable {
     var shape: Scene3DParticleShape = .point
     var blendMode: Scene3DParticleBlendMode = .additive
+    var spriteStyle: Scene3DParticleSpriteStyle = .glow
     var positionX: Double = 0.0
     var positionY: Double = 0.0
     var positionZ: Double = 0.0
@@ -1196,11 +1341,22 @@ struct Scene3DParticleNodeSettings: Equatable, Codable {
     var lifetime: Double = 2.0
     var speed: Double = 1.2
     var spread: Double = 120.0
+    var boxWidth: Double = 1.0
+    var boxHeight: Double = 1.0
+    var boxDepth: Double = 1.0
     var size: Double = 0.045
     var red: Double = 0.55
     var green: Double = 0.82
     var blue: Double = 1.0
     var alpha: Double = 0.85
+    var spriteFlipX: Bool = false
+    var spriteFlipY: Bool = false
+    var spriteSheetColumns: Double = 1.0
+    var spriteSheetRows: Double = 1.0
+    var spriteSheetCount: Double = 1.0
+    var spriteSheetRandom: Bool = true
+    var spriteWobble: Double = 0.0
+    var spriteWobbleSpeed: Double = 1.0
     var gravityY: Double = -0.25
     var cameraDistance: Double = 6.0
     var cameraOrbit: Double = 0.0
@@ -1214,6 +1370,7 @@ struct Scene3DParticleNodeSettings: Equatable, Codable {
     private enum CodingKeys: String, CodingKey {
         case shape
         case blendMode
+        case spriteStyle
         case positionX
         case positionY
         case positionZ
@@ -1226,11 +1383,22 @@ struct Scene3DParticleNodeSettings: Equatable, Codable {
         case lifetime
         case speed
         case spread
+        case boxWidth
+        case boxHeight
+        case boxDepth
         case size
         case red
         case green
         case blue
         case alpha
+        case spriteFlipX
+        case spriteFlipY
+        case spriteSheetColumns
+        case spriteSheetRows
+        case spriteSheetCount
+        case spriteSheetRandom
+        case spriteWobble
+        case spriteWobbleSpeed
         case gravityY
         case cameraDistance
         case cameraOrbit
@@ -1244,6 +1412,7 @@ struct Scene3DParticleNodeSettings: Equatable, Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         shape = try container.decodeIfPresent(Scene3DParticleShape.self, forKey: .shape) ?? .point
         blendMode = try container.decodeIfPresent(Scene3DParticleBlendMode.self, forKey: .blendMode) ?? .additive
+        spriteStyle = try container.decodeIfPresent(Scene3DParticleSpriteStyle.self, forKey: .spriteStyle) ?? .glow
         positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? 0.0
         positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? 0.0
         positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? 0.0
@@ -1256,11 +1425,22 @@ struct Scene3DParticleNodeSettings: Equatable, Codable {
         lifetime = try container.decodeIfPresent(Double.self, forKey: .lifetime) ?? 2.0
         speed = try container.decodeIfPresent(Double.self, forKey: .speed) ?? 1.2
         spread = try container.decodeIfPresent(Double.self, forKey: .spread) ?? 120.0
+        boxWidth = try container.decodeIfPresent(Double.self, forKey: .boxWidth) ?? 1.0
+        boxHeight = try container.decodeIfPresent(Double.self, forKey: .boxHeight) ?? 1.0
+        boxDepth = try container.decodeIfPresent(Double.self, forKey: .boxDepth) ?? 1.0
         size = try container.decodeIfPresent(Double.self, forKey: .size) ?? 0.045
         red = try container.decodeIfPresent(Double.self, forKey: .red) ?? 0.55
         green = try container.decodeIfPresent(Double.self, forKey: .green) ?? 0.82
         blue = try container.decodeIfPresent(Double.self, forKey: .blue) ?? 1.0
         alpha = try container.decodeIfPresent(Double.self, forKey: .alpha) ?? 0.85
+        spriteFlipX = try container.decodeIfPresent(Bool.self, forKey: .spriteFlipX) ?? false
+        spriteFlipY = try container.decodeIfPresent(Bool.self, forKey: .spriteFlipY) ?? false
+        spriteSheetColumns = try container.decodeIfPresent(Double.self, forKey: .spriteSheetColumns) ?? 1.0
+        spriteSheetRows = try container.decodeIfPresent(Double.self, forKey: .spriteSheetRows) ?? 1.0
+        spriteSheetCount = try container.decodeIfPresent(Double.self, forKey: .spriteSheetCount) ?? 1.0
+        spriteSheetRandom = try container.decodeIfPresent(Bool.self, forKey: .spriteSheetRandom) ?? true
+        spriteWobble = try container.decodeIfPresent(Double.self, forKey: .spriteWobble) ?? 0.0
+        spriteWobbleSpeed = try container.decodeIfPresent(Double.self, forKey: .spriteWobbleSpeed) ?? 1.0
         gravityY = try container.decodeIfPresent(Double.self, forKey: .gravityY) ?? -0.25
         cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? 6.0
         cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? 0.0
@@ -1292,6 +1472,40 @@ struct Scene3DRenderNodeSettings: Equatable, Codable {
     var cameraPanY: Double = 0.0
     var backgroundAlpha: Double = 0.0
     var defaultLightIntensity: Double = 100.0
+    var waterDistortion: Double = 0.0
+    var waterScale: Double = 3.2
+    var waterSpeed: Double = 1.0
+
+    enum CodingKeys: String, CodingKey {
+        case sceneCount
+        case cameraDistance
+        case cameraOrbit
+        case cameraPitch
+        case cameraPanX
+        case cameraPanY
+        case backgroundAlpha
+        case defaultLightIntensity
+        case waterDistortion
+        case waterScale
+        case waterSpeed
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sceneCount = try container.decodeIfPresent(Int.self, forKey: .sceneCount) ?? 4
+        cameraDistance = try container.decodeIfPresent(Double.self, forKey: .cameraDistance) ?? 6.0
+        cameraOrbit = try container.decodeIfPresent(Double.self, forKey: .cameraOrbit) ?? 0.0
+        cameraPitch = try container.decodeIfPresent(Double.self, forKey: .cameraPitch) ?? 12.0
+        cameraPanX = try container.decodeIfPresent(Double.self, forKey: .cameraPanX) ?? 0.0
+        cameraPanY = try container.decodeIfPresent(Double.self, forKey: .cameraPanY) ?? 0.0
+        backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? 0.0
+        defaultLightIntensity = try container.decodeIfPresent(Double.self, forKey: .defaultLightIntensity) ?? 100.0
+        waterDistortion = try container.decodeIfPresent(Double.self, forKey: .waterDistortion) ?? 0.0
+        waterScale = try container.decodeIfPresent(Double.self, forKey: .waterScale) ?? 3.2
+        waterSpeed = try container.decodeIfPresent(Double.self, forKey: .waterSpeed) ?? 1.0
+    }
 }
 
 extension Scene3DLightNodeSettings {
@@ -1713,6 +1927,7 @@ struct GridLayoutNodeSettings: Equatable, Codable {
 enum MacroPublishedPortKind: Equatable, Codable {
     case fragmentShader
     case materialSignal(String)
+    case oscPacketSignal(String)
     case pointSignal(String)
     case point3Signal(String)
     case point4Signal(String)
@@ -1733,6 +1948,7 @@ enum MacroPublishedPortKind: Equatable, Codable {
     private enum KindTag: String, Codable {
         case fragmentShader
         case materialSignal
+        case oscPacketSignal
         case pointSignal
         case point3Signal
         case point4Signal
@@ -1754,6 +1970,8 @@ enum MacroPublishedPortKind: Equatable, Codable {
             self = .fragmentShader
         case .materialSignal:
             self = .materialSignal(try container.decode(String.self, forKey: .value))
+        case .oscPacketSignal:
+            self = .oscPacketSignal(try container.decode(String.self, forKey: .value))
         case .pointSignal:
             self = .pointSignal(try container.decode(String.self, forKey: .value))
         case .point3Signal:
@@ -1786,6 +2004,9 @@ enum MacroPublishedPortKind: Equatable, Codable {
             try container.encode(KindTag.fragmentShader, forKey: .type)
         case .materialSignal(let value):
             try container.encode(KindTag.materialSignal, forKey: .type)
+            try container.encode(value, forKey: .value)
+        case .oscPacketSignal(let value):
+            try container.encode(KindTag.oscPacketSignal, forKey: .type)
             try container.encode(value, forKey: .value)
         case .pointSignal(let value):
             try container.encode(KindTag.pointSignal, forKey: .type)
@@ -1934,8 +2155,8 @@ struct TrackballNodeSettings: Equatable, Codable {
     var initialOrbit: Double = 0.0
     var initialPitch: Double = 0.0
     var initialDistance: Double = 6.0
-    var minDistance: Double = 1.0
-    var maxDistance: Double = 30.0
+    var minDistance: Double = -200.0
+    var maxDistance: Double = 200.0
     var initialPanX: Double = 0.0
     var initialPanY: Double = 0.0
 }
@@ -2081,6 +2302,124 @@ struct MIDICCNodeSettings: Equatable, Codable {
     var destinationName: String = ""
 }
 
+struct MIDIInputCCNodeSettings: Equatable, Codable {
+    var ccNumber: Int = 1
+    var channel: Int = 0
+    var listenToAllChannels: Bool = false
+}
+
+struct MIDIInputNoteNodeSettings: Equatable, Codable {
+    var noteNumber: Int = 60
+    var channel: Int = 0
+    var listenToAllChannels: Bool = false
+    var listenToAllNotes: Bool = true
+}
+
+enum OSCOutputValueType: String, CaseIterable, Codable, Identifiable {
+    case float
+    case int
+    case string
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .float: return "Float"
+        case .int: return "Int"
+        case .string: return "String"
+        }
+    }
+}
+
+struct OSCInputNodeSettings: Equatable, Codable {
+    var port: Int = 8000
+    var address: String = ""
+}
+
+struct OSCOutputNodeSettings: Equatable, Codable {
+    var host: String = "127.0.0.1"
+    var port: Int = 8000
+    var address: String = "/value"
+    var valueType: OSCOutputValueType = .float
+}
+
+struct OSCSendNodeSettings: Equatable, Codable {
+    var host: String = "127.0.0.1"
+    var port: Int = 8000
+}
+
+struct OSCMessageNodeSettings: Equatable, Codable {
+    var address: String = "/value"
+    var float1: Double = 0.0
+    var int1: Double = 0.0
+    var text1: String = ""
+    var float2: Double = 0.0
+    var int2: Double = 0.0
+    var text2: String = ""
+    var float3: Double = 0.0
+    var int3: Double = 0.0
+    var text3: String = ""
+    var float4: Double = 0.0
+    var int4: Double = 0.0
+    var text4: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case address
+        case float1
+        case int1
+        case text1
+        case float2
+        case int2
+        case text2
+        case float3
+        case int3
+        case text3
+        case float4
+        case int4
+        case text4
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        address = try container.decodeIfPresent(String.self, forKey: .address) ?? "/value"
+        float1 = try container.decodeIfPresent(Double.self, forKey: .float1) ?? 0.0
+        int1 = try container.decodeIfPresent(Double.self, forKey: .int1) ?? 0.0
+        text1 = try container.decodeIfPresent(String.self, forKey: .text1) ?? ""
+        float2 = try container.decodeIfPresent(Double.self, forKey: .float2) ?? 0.0
+        int2 = try container.decodeIfPresent(Double.self, forKey: .int2) ?? 0.0
+        text2 = try container.decodeIfPresent(String.self, forKey: .text2) ?? ""
+        float3 = try container.decodeIfPresent(Double.self, forKey: .float3) ?? 0.0
+        int3 = try container.decodeIfPresent(Double.self, forKey: .int3) ?? 0.0
+        text3 = try container.decodeIfPresent(String.self, forKey: .text3) ?? ""
+        float4 = try container.decodeIfPresent(Double.self, forKey: .float4) ?? 0.0
+        int4 = try container.decodeIfPresent(Double.self, forKey: .int4) ?? 0.0
+        text4 = try container.decodeIfPresent(String.self, forKey: .text4) ?? ""
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(address, forKey: .address)
+        try container.encode(float1, forKey: .float1)
+        try container.encode(int1, forKey: .int1)
+        try container.encode(text1, forKey: .text1)
+        try container.encode(float2, forKey: .float2)
+        try container.encode(int2, forKey: .int2)
+        try container.encode(text2, forKey: .text2)
+        try container.encode(float3, forKey: .float3)
+        try container.encode(int3, forKey: .int3)
+        try container.encode(text3, forKey: .text3)
+        try container.encode(float4, forKey: .float4)
+        try container.encode(int4, forKey: .int4)
+        try container.encode(text4, forKey: .text4)
+    }
+}
+
+struct OSCBundleNodeSettings: Equatable, Codable {
+    var packetCount: Int = 4
+}
+
 struct ClearNodeSettings: Equatable, Codable {
     var red: Double = 0.0
     var green: Double = 0.0
@@ -2166,6 +2505,7 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
     var isPlaying: Bool = true
     var rate: Double = 1.0
     var seekPosition: Double = 0.0
+    var volume: Double = 1.0
 
     enum CodingKeys: String, CodingKey {
         case filename
@@ -2174,6 +2514,7 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
         case isPlaying
         case rate
         case seekPosition
+        case volume
     }
 
     init(filename: String = "Video",
@@ -2181,13 +2522,15 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
          isLooping: Bool = true,
          isPlaying: Bool = true,
          rate: Double = 1.0,
-         seekPosition: Double = 0.0) {
+         seekPosition: Double = 0.0,
+         volume: Double = 1.0) {
         self.filename = filename
         self.bookmarkData = bookmarkData
         self.isLooping = isLooping
         self.isPlaying = isPlaying
         self.rate = rate
         self.seekPosition = seekPosition
+        self.volume = volume
     }
 
     init(from decoder: Decoder) throws {
@@ -2198,6 +2541,7 @@ struct VideoPlayerNodeSettings: Equatable, Codable {
         isPlaying = try container.decodeIfPresent(Bool.self, forKey: .isPlaying) ?? true
         rate = try container.decodeIfPresent(Double.self, forKey: .rate) ?? 1.0
         seekPosition = try container.decodeIfPresent(Double.self, forKey: .seekPosition) ?? 0.0
+        volume = try container.decodeIfPresent(Double.self, forKey: .volume) ?? 1.0
     }
 }
 
@@ -2394,6 +2738,17 @@ enum GraphNodeKind {
     case iteratorVariables
     case midiOut
     case midiCC
+    case midiCCInput
+    case midiNoteInput
+    case oscInput
+    case oscOutput
+    case oscReceive
+    case oscSend
+    case oscGet4
+    case oscGetArray
+    case oscMake4
+    case oscMakeArray
+    case oscBundle
     case note
     case transform
     case billboard
@@ -2405,6 +2760,7 @@ enum GraphNodeKind {
     case scene3DPrimitive
     case scene3DText
     case scene3DModel
+    case scene3DGaussianSplat
     case scene3DParticle
     case select
     case scalarSwitch
@@ -2424,6 +2780,7 @@ enum GraphNodeKind {
     case scale
     case interpolator
     case hold
+    case scalarSmooth
     case random
     case pulse
     case fireOnLoad
@@ -2458,6 +2815,7 @@ enum GraphPortKind: Equatable, Hashable {
     case scene3DSignal(String)
     case lightSignal(String)
     case materialSignal(String)
+    case oscPacketSignal(String)
     case time
     case pointSignal(String)
     case point3Signal(String)
@@ -2624,6 +2982,11 @@ struct PreviewScene3DModelPass {
     let materialMaps: PreviewScene3DMaterialMaps?
 }
 
+struct PreviewScene3DGaussianSplatPass {
+    let nodeID: UUID
+    let settings: Scene3DGaussianSplatNodeSettings
+}
+
 struct PreviewScene3DParticlePass {
     let nodeID: UUID
     let settings: Scene3DParticleNodeSettings
@@ -2638,6 +3001,7 @@ indirect enum PreviewScene3DSource {
     case primitive(PreviewScene3DPrimitivePass)
     case text(PreviewScene3DTextPass)
     case model(PreviewScene3DModelPass)
+    case gaussianSplat(PreviewScene3DGaussianSplatPass)
     case particle(PreviewScene3DParticlePass)
     case light(PreviewScene3DLight)
     case transform(
@@ -2665,6 +3029,9 @@ struct PreviewScene3DRenderPass {
     let cameraPanY: Float
     let backgroundAlpha: Float
     let defaultLightIntensity: Float
+    let waterDistortion: Float
+    let waterScale: Float
+    let waterSpeed: Float
 }
 
 struct PreviewScene3DMaterialMaps {
@@ -2692,6 +3059,7 @@ indirect enum PreviewPassSource {
     case scene3DPrimitive(PreviewScene3DPrimitivePass)
     case scene3DText(PreviewScene3DTextPass)
     case scene3DModel(PreviewScene3DModelPass)
+    case scene3DGaussianSplat(PreviewScene3DGaussianSplatPass)
     case scene3DParticle(PreviewScene3DParticlePass)
     case transition(PreviewTransitionPass)
     case mix(primary: PreviewPassSource, secondary: PreviewPassSource, amount: Float)
@@ -2717,6 +3085,7 @@ indirect enum PreviewRenderConfiguration {
     case scene3DPrimitive(PreviewScene3DPrimitivePass)
     case scene3DText(PreviewScene3DTextPass)
     case scene3DModel(PreviewScene3DModelPass)
+    case scene3DGaussianSplat(PreviewScene3DGaussianSplatPass)
     case scene3DParticle(PreviewScene3DParticlePass)
     case feedback(PreviewFeedbackPass)
     case transition(PreviewTransitionPass)

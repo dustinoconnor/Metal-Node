@@ -14,6 +14,8 @@ struct PreviewWindowView: View {
     var body: some View {
         MetalPreviewView(
             configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
+            isRunning: store.isGraphRunning,
+            videoRecorder: store.previewVideoRecorder(forRenderNodeID: renderNodeID),
             onMouseChange: store.updateMousePosition,
             onMouseButtonChange: store.updateMouseButtons,
             onModifierFlagsChange: store.updatePreviewModifierFlags,

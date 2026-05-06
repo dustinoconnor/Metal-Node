@@ -6,30 +6,12 @@
 //
 
 import SwiftUI
-import UniformTypeIdentifiers
 import AppKit
 
 private enum InspectorSectionID: Hashable {
     case selectedNode
     case nodeLibrary
     case uniformControls
-}
-
-private enum ImportTarget {
-    case isf
-    case metal
-    case graph
-
-    var allowedContentTypes: [UTType] {
-        switch self {
-        case .isf:
-            return [.text, .plainText, .sourceCode, .data]
-        case .metal:
-            return [.sourceCode, .text, .plainText, .data]
-        case .graph:
-            return [.json, .data, .plainText]
-        }
-    }
 }
 
 private enum UIPreferenceKey {
@@ -63,8 +45,6 @@ struct ContentView: View {
     @EnvironmentObject private var store: GraphStore
     @AppStorage(UIPreferenceKey.parameterInspectorWidth) private var parameterInspectorWidth = 300.0
     @AppStorage(UIPreferenceKey.nodeLibraryWidth) private var nodeLibraryWidth = 320.0
-    @State private var importTarget: ImportTarget?
-    @State private var isImportingFile = false
     @State private var isNodeLibraryVisible = true
     @State private var isParameterInspectorVisible = true
     @State private var isStartupApplyingLayout = true
@@ -96,8 +76,7 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItemGroup {
                     Button("Open Graph") {
-                        importTarget = .graph
-                        isImportingFile = true
+                        store.openGraphSnapshot()
                     }
 
                     Button(store.hasAuxiliaryWindowsVisible ? "Hide Windows" : "Show Render") {
@@ -126,10 +105,24 @@ struct ContentView: View {
                     }
                     .keyboardShortcut(.return, modifiers: [.command])
 
-                    Button("Rebuild Graph") {
-                        store.rebuildCurrentGraph()
+                    Button(store.isGraphRunning ? "Running" : "Run") {
+                        store.runGraph()
                     }
-                    .keyboardShortcut("r")
+                    .disabled(store.isGraphRunning)
+
+                    Button(store.isGraphRunning ? "Pause" : "Paused") {
+                        store.pauseGraph()
+                    }
+                    .disabled(!store.isGraphRunning)
+
+                    Button("Restart") {
+                        store.restartGraphExecution()
+                    }
+
+                    Button(store.activePreviewVideoRecorder == nil ? "Export Movie" : "Exporting...") {
+                        store.exportPreviewMovie()
+                    }
+                    .disabled(store.activePreviewVideoRecorder != nil)
 
                     Button("Save Graph") {
                         store.saveGraphSnapshot()
@@ -138,7 +131,7 @@ struct ContentView: View {
             }
 
             if isNodeLibraryVisible {
-                LibraryInspectorPanel(store: store, importTarget: $importTarget, isImportingFile: $isImportingFile)
+                LibraryInspectorPanel(store: store)
                     .frame(minWidth: 250, idealWidth: nodeLibraryWidth, maxWidth: 420, maxHeight: .infinity)
                     .background(
                         GeometryReader { geometry in
@@ -163,6 +156,7 @@ struct ContentView: View {
         .frame(minWidth: 760, minHeight: 520)
         .background(MainWindowConfigurator(store: store))
         .onAppear {
+            store.graphWindowVisibilityDidChange(true)
             GraphStore.setCommandTargetStore(store)
             DispatchQueue.main.async {
                 store.restoreLastOpenedGraphIfNeeded()
@@ -172,6 +166,9 @@ struct ContentView: View {
                     isStartupApplyingLayout = false
                 }
             }
+        }
+        .onDisappear {
+            store.graphWindowVisibilityDidChange(false)
         }
         .onChange(of: store.inspectorToggleRequestID) { _, _ in
             toggleNodeLibrary()
@@ -218,24 +215,6 @@ struct ContentView: View {
                     store.updatePanelWidths(libraryWidth: measuredWidth, markDirty: true)
                 }
             }
-        }
-        .fileImporter(
-            isPresented: $isImportingFile,
-            allowedContentTypes: importTarget?.allowedContentTypes ?? [.data],
-            allowsMultipleSelection: false
-        ) { result in
-            switch importTarget {
-            case .isf:
-                store.importISF(result: result)
-            case .metal:
-                store.importMetal(result: result)
-            case .graph:
-                store.importGraphSnapshot(result: result)
-            case .none:
-                break
-            }
-            importTarget = nil
-            isImportingFile = false
         }
     }
 
@@ -383,6 +362,13 @@ private struct MainWindowConfigurator: NSViewRepresentable {
 
     final class Coordinator {
         var configuredWindowNumber: Int?
+        var closeObserver: NSObjectProtocol?
+
+        deinit {
+            if let closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -412,7 +398,20 @@ private struct MainWindowConfigurator: NSViewRepresentable {
             window.hasShadow = true
             window.titlebarAppearsTransparent = true
             coordinator.configuredWindowNumber = window.windowNumber
+            if let closeObserver = coordinator.closeObserver {
+                NotificationCenter.default.removeObserver(closeObserver)
+            }
+            coordinator.closeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.willCloseNotification,
+                object: window,
+                queue: .main
+            ) { [store] _ in
+                Task { @MainActor in
+                    store.graphWindowVisibilityDidChange(false)
+                }
+            }
         }
+        store.graphWindowVisibilityDidChange(window.isVisible)
         window.title = store.currentGraphDisplayName
         window.isDocumentEdited = store.isCurrentGraphDirty
         window.representedURL = store.currentGraphFileURL
@@ -421,8 +420,6 @@ private struct MainWindowConfigurator: NSViewRepresentable {
 
 private struct LibrarySidebar: View {
     @ObservedObject var store: GraphStore
-    @Binding var importTarget: ImportTarget?
-    @Binding var isImportingFile: Bool
     let isInspectorVisible: Bool
     let toggleInspector: () -> Void
 
@@ -430,16 +427,14 @@ private struct LibrarySidebar: View {
         List {
             Section("Pipeline") {
                 Button {
-                    importTarget = .isf
-                    isImportingFile = true
+                    store.importISFFile()
                 } label: {
                     Label("Import ISF Shader", systemImage: "square.and.arrow.down")
                 }
                 .buttonStyle(.plain)
 
                 Button {
-                    importTarget = .graph
-                    isImportingFile = true
+                    store.openGraphSnapshot()
                 } label: {
                     Label("Open Saved Graph", systemImage: "folder")
                 }
@@ -500,8 +495,6 @@ private struct LibrarySidebar: View {
 
 private struct LibraryInspectorPanel: View {
     @ObservedObject var store: GraphStore
-    @Binding var importTarget: ImportTarget?
-    @Binding var isImportingFile: Bool
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -988,6 +981,28 @@ private struct NodeLibrarySection: View {
             return descriptor("midiOut", "MIDI Out", "Point to note mapping", .orange, "core:midiOut")
         case .midiCC:
             return descriptor("midiCC", "MIDI CC", "Scalar to controller output", .orange, "core:midiCC")
+        case .midiCCInput:
+            return descriptor("midiCCInput", "MIDI CC In", "Controller input source", .orange, "core:midiCCInput")
+        case .midiNoteInput:
+            return descriptor("midiNoteInput", "MIDI Note In", "Note and velocity input source", .orange, "core:midiNoteInput")
+        case .oscInput:
+            return nil
+        case .oscOutput:
+            return nil
+        case .oscReceive:
+            return descriptor("oscReceive", "OSC Receive", "Slim OSC packet input", .orange, "core:oscReceive")
+        case .oscSend:
+            return descriptor("oscSend", "OSC Send", "Send OSC packets or bundles", .orange, "core:oscSend")
+        case .oscGet4:
+            return descriptor("oscGet4", "OSC Get 4", "Read up to four OSC values", .orange, "core:oscGet4")
+        case .oscGetArray:
+            return descriptor("oscGetArray", "OSC Get Array", "Read numeric OSC values as an array", .orange, "core:oscGetArray")
+        case .oscMake4:
+            return descriptor("oscMake4", "OSC Make 4", "Build one OSC message", .orange, "core:oscMake4")
+        case .oscMakeArray:
+            return descriptor("oscMakeArray", "OSC Make Array", "Build one OSC float-array message", .orange, "core:oscMakeArray")
+        case .oscBundle:
+            return descriptor("oscBundle", "OSC Bundle", "Combine OSC messages into one bundle", .orange, "core:oscBundle")
         case .note:
             return descriptor("note", "Note", "Graph note and screen overlay", .yellow, "core:note")
         case .transform:
@@ -1010,8 +1025,14 @@ private struct NodeLibrarySection: View {
             return descriptor("scene3DText", "3D Text", "SceneKit 3D text with font and extrusion controls", .blue, "core:scene3DText")
         case .scene3DModel:
             return descriptor("scene3DModel", "3D Model", "SceneKit model file rendered as a source", .blue, "core:scene3DModel")
+        case .scene3DGaussianSplat:
+            return descriptor("scene3DGaussianSplat", "Gaussian Splat", "PLY or panorama depth-splat source", .purple, "core:scene3DGaussianSplat")
         case .scene3DParticle:
             return descriptor("scene3DParticle", "3D Particles", "SceneKit particle emitter rendered as a source", .blue, "core:scene3DParticle")
+        case .scene3DFishSchool:
+            return descriptor("scene3DFishSchool", "3D Fish School", "Small SceneKit particle school for 3D scenes", .cyan, "core:scene3DFishSchool")
+        case .scene3DDustHaze:
+            return descriptor("scene3DDustHaze", "3D Dust Haze", "Slow soft dust volume for desert fog and haze", .yellow, "core:scene3DDustHaze")
         case .select:
             return descriptor("select", "Select", "Switch between two sources", .mint, "core:select")
         case .scalarSwitch:
@@ -1056,6 +1077,8 @@ private struct NodeLibrarySection: View {
             return descriptor("interpolator", "Interpolator", "Looping eased value", .blue, "core:interpolator")
         case .hold:
             return descriptor("hold", "Sample & Hold", "Freeze value while gate is low", .indigo, "core:hold")
+        case .scalarSmooth:
+            return descriptor("scalarSmooth", "Scalar Smooth", "Smooth or inertial scalar follower", .mint, "core:scalarSmooth")
         case .trail:
             return descriptor("trail", "Trail", "Rainbow point history", .purple, "core:trail")
         case .monitor:
@@ -1224,7 +1247,7 @@ private struct NodeLibrarySection: View {
             return "repeat"
         case "iteratorVariables":
             return "text.line.first.and.arrowtriangle.forward"
-        case "midiOut", "midiCC":
+        case "midiOut", "midiCC", "midiCCInput", "midiNoteInput", "oscInput", "oscOutput", "oscReceive", "oscSend", "oscGet4", "oscGetArray", "oscMake4", "oscMakeArray", "oscBundle":
             return "pianokeys"
         case "transform":
             return "move.3d"
@@ -1258,6 +1281,8 @@ private struct NodeLibrarySection: View {
             return "waveform.path.ecg"
         case "hold":
             return "pause.circle"
+        case "scalarSmooth":
+            return "point.topleft.down.curvedto.point.bottomright.up"
         case "trail":
             return "scribble.variable"
         case "monitor":
@@ -1605,10 +1630,34 @@ private struct SelectedNodePanel: View {
             return "Generates a looping scalar value between start and end using linear or eased timing."
         case .hold:
             return "Samples the incoming value while Gate is above the threshold, then keeps the last sampled value when the gate drops."
+        case .scalarSmooth:
+            return "Follows a target scalar smoothly. Use Smooth for soft interpolation, or Inertia for springy camera and trackball motion."
         case .midiOut:
             return "Maps a point signal to notes where X selects the scale degree and Y selects the octave, then sends MIDI to the IAC bus or another destination."
         case .midiCC:
             return "Maps a scalar input range to MIDI CC 0...127 so you can drive jog wheels, controller knobs, or software parameters."
+        case .midiCCInput:
+            return "Listens for incoming MIDI controller messages and outputs the current value, normalized value, and a one-frame trigger for graphics control."
+        case .midiNoteInput:
+            return "Listens for incoming MIDI notes and outputs note number, velocity, normalized velocity, gate, and trigger so controllers can drive visuals directly."
+        case .oscInput:
+            return "Receives OSC over UDP, filters by port and address, and outputs float, int, text, address, plus a one-frame trigger."
+        case .oscOutput:
+            return "Sends OSC over UDP to a host, port, and address using either a float, int, or string input."
+        case .oscReceive:
+            return "Receives OSC packets over UDP and outputs a slim packet signal, the current address, and a one-frame trigger for helper nodes."
+        case .oscSend:
+            return "Sends a packet or bundle built downstream so one node can forward complete OSC messages without bloated inline ports."
+        case .oscGet4:
+            return "Reads the first message in an OSC packet and exposes up to four values as float, int, and text outputs."
+        case .oscGetArray:
+            return "Reads the first message in an OSC packet and exposes all numeric arguments as a scalar array for iterators, indexing, and motion data."
+        case .oscMake4:
+            return "Builds one OSC message with an address and up to four values so it can be reused, bundled, or sent later."
+        case .oscMakeArray:
+            return "Builds one OSC message from a scalar array so float-array data can be sent as landmarks, tracking points, or batched control values."
+        case .oscBundle:
+            return "Combines up to four OSC messages into one bundle packet for grouped sends to other apps."
         case .note:
             return "Editable graph note node that can also render as a transparent text overlay source through Layers or Render."
         case .transform:
@@ -1631,6 +1680,12 @@ private struct SelectedNodePanel: View {
             return "Renders editable SceneKit 3D text into the graph with font, extrusion, chamfer, transform, camera, light, and color controls."
         case .scene3DModel:
             return "Loads a SceneKit-compatible 3D model file like DAE or USD and renders it into the graph with transform, camera, and light controls. Use it as a real 3D source before we build out full materials and animation controls."
+        case .scene3DGaussianSplat:
+            return """
+            Loads a Gaussian splat PLY file or builds a pseudo-splat room from an equirectangular panorama plus a matching grayscale depth matte.
+
+            Depth matte prompt: Create an accurate grayscale depth map for this equirectangular panorama. White should be closest to the camera/viewer and black should be farthest away. Preserve the same aspect ratio, alignment, horizon, and object shapes exactly. Do not add texture, color, outlines, labels, or artistic shading; output only a smooth grayscale depth matte.
+            """
         case .scene3DParticle:
             return "Creates a SceneKit particle emitter with transform, birth rate, lifetime, speed, spread, size, color, and blend controls."
         case .trail:

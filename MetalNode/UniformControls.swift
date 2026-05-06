@@ -219,6 +219,7 @@ struct LabeledSlider: View {
     let title: String
     @Binding var value: Double
     let range: ClosedRange<Double>
+    var clampsToRange: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -231,11 +232,21 @@ struct LabeledSlider: View {
                     title: title,
                     value: value
                 ) { newValue in
-                    value = min(max(newValue, range.lowerBound), range.upperBound)
+                    if clampsToRange {
+                        value = min(max(newValue, range.lowerBound), range.upperBound)
+                    } else {
+                        value = max(newValue, range.lowerBound)
+                    }
                 }
                 .frame(width: 78)
             }
-            Slider(value: $value, in: range)
+            Slider(
+                value: Binding(
+                    get: { min(max(value, range.lowerBound), range.upperBound) },
+                    set: { value = $0 }
+                ),
+                in: range
+            )
         }
     }
 }
@@ -257,7 +268,12 @@ struct NumericField: View {
             TextField(
                 title,
                 text: Binding(
-                    get: { text.isEmpty ? String(format: "%.2f", value) : text },
+                    get: {
+                        if isFocused {
+                            return text
+                        }
+                        return String(format: "%.2f", value)
+                    },
                     set: { text = $0 }
                 )
             )
@@ -270,11 +286,6 @@ struct NumericField: View {
                     commit()
                 }
             }
-            .onChange(of: value) { _, newValue in
-                if !isFocused {
-                    text = String(format: "%.2f", newValue)
-                }
-            }
         }
         .onAppear {
             text = String(format: "%.2f", value)
@@ -282,7 +293,8 @@ struct NumericField: View {
     }
 
     private func commit() {
-        guard let parsed = Double(text) else {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty, let parsed = Double(trimmedText) else {
             text = String(format: "%.2f", value)
             return
         }

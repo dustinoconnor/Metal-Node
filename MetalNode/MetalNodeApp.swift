@@ -11,7 +11,7 @@ import SwiftUI
 @main
 struct MetalNodeApp: App {
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Metal Composer", id: "graph") {
             RootWindowView()
         }
         .defaultSize(width: 1200, height: 820)
@@ -90,6 +90,7 @@ private struct CanvasPreferencesView: View {
 }
 
 private struct MetalNodeCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
     @FocusedObject private var store: GraphStore?
 
     private var resolvedStore: GraphStore? {
@@ -106,10 +107,16 @@ private struct MetalNodeCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .newItem) {
             Button("Open Graph…") {
-                resolvedStore?.openGraphSnapshot()
+                if let resolvedStore {
+                    resolvedStore.openGraphSnapshot()
+                } else {
+                    openWindow(id: "graph")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        GraphStore.activeCommandTargetStore?.openGraphSnapshot()
+                    }
+                }
             }
             .keyboardShortcut("o")
-            .disabled(resolvedStore == nil)
 
             Button("Import ISF…") {
                 resolvedStore?.importISFFile()
@@ -200,6 +207,12 @@ private struct MetalNodeCommands: Commands {
         }
 
         CommandMenu("Graph") {
+            Button("Rebuild Graph") {
+                resolvedStore?.rebuildCurrentGraph()
+            }
+            .keyboardShortcut("r")
+            .disabled(resolvedStore == nil)
+
             Button("Exit Container Editor") {
                 resolvedStore?.exitActiveContainerEditor()
             }
