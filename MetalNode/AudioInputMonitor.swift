@@ -71,6 +71,7 @@ final class AudioInputMonitor: ObservableObject {
     private var isMonitoringEnabled = false
     private var latestAnalysisFrame: AnalysisFrame?
     private var lastAudioFrameUptime: TimeInterval = 0
+    private var exportTap: ((AVAudioPCMBuffer) -> Void)?
 
     init() {
         configureObservers()
@@ -157,7 +158,9 @@ final class AudioInputMonitor: ObservableObject {
 
         inputNode.removeTap(onBus: 0)
         inputNode.installTap(onBus: 0, bufferSize: AVAudioFrameCount(fftSize), format: inputFormat) { [weak self] buffer, _ in
-            self?.analyze(buffer: buffer)
+            guard let self else { return }
+            self.exportTap?(Self.copyBuffer(buffer))
+            self.analyze(buffer: buffer)
         }
         isTapInstalled = true
 
@@ -173,6 +176,16 @@ final class AudioInputMonitor: ObservableObject {
             teardownEngine()
             snapshot.status = "Audio start failed: \(error.localizedDescription)"
         }
+    }
+
+    func setExportTap(_ tap: ((AVAudioPCMBuffer) -> Void)?) {
+        exportTap = tap
+    }
+
+    func currentRecordingFormat() -> AVAudioFormat? {
+        let inputFormat = engine.inputNode.inputFormat(forBus: 0)
+        guard inputFormat.channelCount > 0 else { return nil }
+        return inputFormat
     }
 
     private func configureObservers() {
@@ -331,6 +344,44 @@ final class AudioInputMonitor: ObservableObject {
                 )
             }
         }
+    }
+
+    private static func copyBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
+        guard let copy = AVAudioPCMBuffer(pcmFormat: buffer.format, frameCapacity: buffer.frameLength) else {
+            return buffer
+        }
+        copy.frameLength = buffer.frameLength
+
+        let channelCount = Int(buffer.format.channelCount)
+        let frameCount = Int(buffer.frameLength)
+
+        if let source = buffer.floatChannelData, let destination = copy.floatChannelData {
+            if buffer.format.isInterleaved {
+                destination[0].assign(from: source[0], count: frameCount * max(channelCount, 1))
+            } else {
+                for channel in 0..<channelCount {
+                    destination[channel].assign(from: source[channel], count: frameCount)
+                }
+            }
+        } else if let source = buffer.int16ChannelData, let destination = copy.int16ChannelData {
+            if buffer.format.isInterleaved {
+                destination[0].assign(from: source[0], count: frameCount * max(channelCount, 1))
+            } else {
+                for channel in 0..<channelCount {
+                    destination[channel].assign(from: source[channel], count: frameCount)
+                }
+            }
+        } else if let source = buffer.int32ChannelData, let destination = copy.int32ChannelData {
+            if buffer.format.isInterleaved {
+                destination[0].assign(from: source[0], count: frameCount * max(channelCount, 1))
+            } else {
+                for channel in 0..<channelCount {
+                    destination[channel].assign(from: source[channel], count: frameCount)
+                }
+            }
+        }
+
+        return copy
     }
 
     private func publishLatestAnalysisFrame() {

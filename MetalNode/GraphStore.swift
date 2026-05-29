@@ -136,6 +136,7 @@ enum LibraryCoreNodeType: Identifiable {
     case billboard
     case line
     case scene3DTransform
+    case scene3DTile
     case scene3DRender
     case scene3DLight
     case scene3DMaterial
@@ -167,6 +168,7 @@ enum LibraryCoreNodeType: Identifiable {
     case bloom
     case hueRotate
     case posterize
+    case levels
     case glow
     case underwater
     case feedback
@@ -205,10 +207,12 @@ enum LibraryCoreNodeType: Identifiable {
     case datamosh
     case temporalGhostTrails
     case frameMelt
+    case reactionDiffusion
     case prismSplit
     case ghostFrameEcho
     case pixelSortBands
     case phyllotaxisPetalSpiral
+    case fbmNoiseHeightMap
     case metalFragment
     case renderOutput
 
@@ -388,6 +392,8 @@ enum LibraryCoreNodeType: Identifiable {
             return "line"
         case .scene3DTransform:
             return "scene3DTransform"
+        case .scene3DTile:
+            return "scene3DTile"
         case .scene3DRender:
             return "scene3DRender"
         case .scene3DLight:
@@ -450,12 +456,16 @@ enum LibraryCoreNodeType: Identifiable {
             return "hueRotate"
         case .posterize:
             return "posterize"
+        case .levels:
+            return "levels"
         case .glow:
             return "glow"
         case .underwater:
             return "underwater"
         case .feedback:
             return "feedback"
+        case .reactionDiffusion:
+            return "reactionDiffusion"
         case .scale:
             return "scale"
         case .interpolator:
@@ -534,6 +544,8 @@ enum LibraryCoreNodeType: Identifiable {
             return "pixelSortBands"
         case .phyllotaxisPetalSpiral:
             return "phyllotaxisPetalSpiral"
+        case .fbmNoiseHeightMap:
+            return "fbmNoiseHeightMap"
         case .metalFragment:
             return "metalFragment"
         case .renderOutput:
@@ -775,6 +787,7 @@ final class GraphStore: ObservableObject {
         let billboardSettings: BillboardNodeSettings?
         let lineSettings: LineNodeSettings?
         let scene3DTransformSettings: Scene3DTransformNodeSettings?
+        let scene3DTileSettings: Scene3DTileNodeSettings?
         let scene3DRenderSettings: Scene3DRenderNodeSettings?
         let scene3DLightSettings: Scene3DLightNodeSettings?
         let scene3DMaterialSettings: Scene3DMaterialNodeSettings?
@@ -921,6 +934,7 @@ final class GraphStore: ObservableObject {
     @Published private(set) var billboardNodeSettings: [GraphNode.ID: BillboardNodeSettings] = [:]
     @Published private(set) var lineNodeSettings: [GraphNode.ID: LineNodeSettings] = [:]
     @Published private(set) var scene3DTransformNodeSettings: [GraphNode.ID: Scene3DTransformNodeSettings] = [:]
+    @Published private(set) var scene3DTileNodeSettings: [GraphNode.ID: Scene3DTileNodeSettings] = [:]
     @Published private(set) var scene3DRenderNodeSettings: [GraphNode.ID: Scene3DRenderNodeSettings] = [:]
     @Published private(set) var scene3DLightNodeSettings: [GraphNode.ID: Scene3DLightNodeSettings] = [:]
     @Published private(set) var scene3DMaterialNodeSettings: [GraphNode.ID: Scene3DMaterialNodeSettings] = [:]
@@ -942,6 +956,7 @@ final class GraphStore: ObservableObject {
     @Published private(set) var videoPlayerFrameData: [GraphNode.ID: Data] = [:]
     @Published private(set) var layerNodeSettings: [GraphNode.ID: LayerNodeSettings] = [:]
     @Published private(set) var feedbackNodeSettings: [GraphNode.ID: FeedbackNodeSettings] = [:]
+    @Published private(set) var reactionDiffusionNodeSettings: [GraphNode.ID: ReactionDiffusionNodeSettings] = [:]
     @Published private(set) var coreImageNodeSettings: [GraphNode.ID: CoreImageNodeSettings] = [:]
     @Published private(set) var underwaterNodeSettings: [GraphNode.ID: UnderwaterNodeSettings] = [:]
     @Published private(set) var inspectorToggleRequestID = UUID()
@@ -1003,6 +1018,7 @@ final class GraphStore: ObservableObject {
     private var delayNodeRuntimeStates: [GraphNode.ID: DelayNodeRuntimeState] = [:]
     private var timerNodeRuntimeStates: [GraphNode.ID: TimerNodeRuntimeState] = [:]
     private var graphActivationID = 1
+    private var isMovieAudioCaptureActive = false
     private var scrollGestureNodeRuntimeStates: [GraphNode.ID: ScrollGestureNodeRuntimeState] = [:]
     private var zoomGestureNodeRuntimeStates: [GraphNode.ID: ZoomGestureNodeRuntimeState] = [:]
     private var trackballNodeRuntimeStates: [GraphNode.ID: TrackballNodeRuntimeState] = [:]
@@ -1551,6 +1567,7 @@ final class GraphStore: ObservableObject {
             billboardSettings: billboardNodeSettings[node.id],
             lineSettings: lineNodeSettings[node.id],
             scene3DTransformSettings: scene3DTransformNodeSettings[node.id],
+            scene3DTileSettings: scene3DTileNodeSettings[node.id],
             scene3DRenderSettings: scene3DRenderNodeSettings[node.id],
             scene3DLightSettings: scene3DLightNodeSettings[node.id],
             scene3DMaterialSettings: scene3DMaterialNodeSettings[node.id],
@@ -2000,6 +2017,8 @@ final class GraphStore: ObservableObject {
             addTransformNode(at: position)
         case .scene3DTransform:
             addScene3DTransformNode(at: position)
+        case .scene3DTile:
+            addScene3DTileNode(at: position)
         case .scene3DRender:
             addScene3DRenderNode(at: position)
         case .billboard:
@@ -2081,12 +2100,16 @@ final class GraphStore: ObservableObject {
             addHueRotateNode(at: position)
         case .posterize:
             addPosterizeNode(at: position)
+        case .levels:
+            addLevelsNode(at: position)
         case .glow:
             addGlowNode(at: position)
         case .underwater:
             addUnderwaterNode(at: position)
         case .feedback:
             addFeedbackNode(at: position)
+        case .reactionDiffusion:
+            addReactionDiffusionNode(at: position)
         case .scale:
             addScaleNode(at: position)
         case .interpolator:
@@ -2374,6 +2397,9 @@ final class GraphStore: ObservableObject {
         }
         if let settings = payload.scene3DTransformSettings {
             scene3DTransformNodeSettings[newNodeID] = settings
+        }
+        if let settings = payload.scene3DTileSettings {
+            scene3DTileNodeSettings[newNodeID] = settings
         }
         if let settings = payload.scene3DRenderSettings {
             scene3DRenderNodeSettings[newNodeID] = settings
@@ -2678,7 +2704,7 @@ final class GraphStore: ObservableObject {
                 return primaryFragmentNode
             }
             return document.nodes.first(where: { $0.id == connectedFragmentID })
-        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
+        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DTile, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow, .underwater, .feedback, .reactionDiffusion, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
             return primaryFragmentNode
         }
     }
@@ -2940,7 +2966,7 @@ final class GraphStore: ObservableObject {
     }
 
     var availableCoreNodeTypes: [LibraryCoreNodeType] {
-        var coreNodes: [LibraryCoreNodeType] = [.mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .iterator, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .scene3DFishSchool, .scene3DDustHaze, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .imageNode, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers, .plasma, .lavaLamp, .organicMotion, .colorDiffusionFlow, .nebula, .liquidChrome, .liquidFlux, .prismRings, .turntableSpectrum, .hologramScan, .hologramVideo, .badTVGlitch, .heatDistortion, .liquidGlass, .chromaticAberration, .aurora, .digitalRain, .plasmaVortex, .cyberTunnel, .rgbOffsetSplit, .edgeDetection, .liquidNoiseWipe, .mercuryMelt, .glitchDisplacement, .datamosh, .temporalGhostTrails, .frameMelt, .prismSplit, .ghostFrameEcho, .pixelSortBands, .phyllotaxisPetalSpiral, .metalFragment, .renderOutput]
+        var coreNodes: [LibraryCoreNodeType] = [.mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .iterator, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DTile, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .scene3DFishSchool, .scene3DDustHaze, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .imageNode, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow, .underwater, .feedback, .reactionDiffusion, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers, .plasma, .lavaLamp, .organicMotion, .colorDiffusionFlow, .nebula, .liquidChrome, .liquidFlux, .prismRings, .turntableSpectrum, .hologramScan, .hologramVideo, .badTVGlitch, .heatDistortion, .liquidGlass, .chromaticAberration, .aurora, .digitalRain, .plasmaVortex, .cyberTunnel, .rgbOffsetSplit, .edgeDetection, .liquidNoiseWipe, .mercuryMelt, .glitchDisplacement, .datamosh, .temporalGhostTrails, .frameMelt, .prismSplit, .ghostFrameEcho, .pixelSortBands, .phyllotaxisPetalSpiral, .fbmNoiseHeightMap, .metalFragment, .renderOutput]
         if editingIteratorNodeID != nil {
             coreNodes.insert(.iteratorVariables, at: min(coreNodes.count, 1))
         }
@@ -2964,7 +2990,7 @@ final class GraphStore: ObservableObject {
         switch node.kind {
         case .metalFragment, .renderOutput:
             return true
-        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
+        case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DTile, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .transition, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow, .underwater, .feedback, .reactionDiffusion, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .mix, .layers:
             return true
         }
     }
@@ -6975,13 +7001,7 @@ final class GraphStore: ObservableObject {
             title: index == 1 ? "Window Control" : "Window Control \(index)",
             kind: .renderWindow,
             position: position,
-            inputPorts: [
-                GraphPort(id: "renderwindow:\(nodeID.uuidString):fullscreen", nodeID: nodeID, name: "Fullscreen", direction: .input, kind: .scalarSignal("fullscreen")),
-                GraphPort(id: "renderwindow:\(nodeID.uuidString):x", nodeID: nodeID, name: "X", direction: .input, kind: .scalarSignal("x")),
-                GraphPort(id: "renderwindow:\(nodeID.uuidString):y", nodeID: nodeID, name: "Y", direction: .input, kind: .scalarSignal("y")),
-                GraphPort(id: "renderwindow:\(nodeID.uuidString):width", nodeID: nodeID, name: "Width", direction: .input, kind: .scalarSignal("width")),
-                GraphPort(id: "renderwindow:\(nodeID.uuidString):height", nodeID: nodeID, name: "Height", direction: .input, kind: .scalarSignal("height"))
-            ],
+            inputPorts: makeRenderWindowInputPorts(nodeID: nodeID),
             outputPorts: []
         )
 
@@ -6992,6 +7012,17 @@ final class GraphStore: ObservableObject {
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
         statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    private func makeRenderWindowInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):fullscreen", nodeID: nodeID, name: "Fullscreen", direction: .input, kind: .scalarSignal("fullscreen")),
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):x", nodeID: nodeID, name: "X", direction: .input, kind: .scalarSignal("x")),
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):y", nodeID: nodeID, name: "Y", direction: .input, kind: .scalarSignal("y")),
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):width", nodeID: nodeID, name: "Width", direction: .input, kind: .scalarSignal("width")),
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):height", nodeID: nodeID, name: "Height", direction: .input, kind: .scalarSignal("height")),
+            GraphPort(id: "renderwindow:\(nodeID.uuidString):fps", nodeID: nodeID, name: "FPS", direction: .input, kind: .scalarSignal("fps"))
+        ]
     }
 
     func addGridLayoutNode(at position: CGPoint) {
@@ -8021,6 +8052,10 @@ final class GraphStore: ObservableObject {
         addCoreImageNode(effect: .posterize, titlePrefix: "Posterize", at: position)
     }
 
+    func addLevelsNode(at position: CGPoint) {
+        addCoreImageNode(effect: .levels, titlePrefix: "Levels", at: position)
+    }
+
     func addGlowNode(at position: CGPoint) {
         addCoreImageNode(effect: .glow, titlePrefix: "Glow", at: position)
     }
@@ -8171,6 +8206,8 @@ final class GraphStore: ObservableObject {
             return "Angle"
         case .posterize:
             return "Levels"
+        case .levels:
+            return "Black"
         case .edges:
             return "Strength"
         case .pixellate:
@@ -8190,6 +8227,8 @@ final class GraphStore: ObservableObject {
             return "Angle"
         case .kaleidoscope:
             return "Spin"
+        case .levels:
+            return "White"
         case .blur, .hueRotate, .posterize, .edges, .pixellate:
             return nil
         }
@@ -8240,6 +8279,50 @@ final class GraphStore: ObservableObject {
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
         statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    func addReactionDiffusionNode(at position: CGPoint) {
+        let index = document.nodes.reduce(0) { partialResult, node in
+            guard case .reactionDiffusion = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: index == 1 ? "Reaction Diffusion" : "Reaction Diffusion \(index)",
+            kind: .reactionDiffusion,
+            position: position,
+            inputPorts: makeReactionDiffusionInputPorts(nodeID: nodeID),
+            outputPorts: [
+                GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):output", nodeID: nodeID, name: "Shader", direction: .output, kind: .fragmentShader)
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        reactionDiffusionNodeSettings[nodeID] = ReactionDiffusionNodeSettings()
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    private func makeReactionDiffusionInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):texture", nodeID: nodeID, name: "Texture", direction: .input, kind: .fragmentShader),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):feed", nodeID: nodeID, name: "Feed", direction: .input, kind: .scalarSignal("feed")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):kill", nodeID: nodeID, name: "Kill", direction: .input, kind: .scalarSignal("kill")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):diffusiona", nodeID: nodeID, name: "Diffusion A", direction: .input, kind: .scalarSignal("diffusionA")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):diffusionb", nodeID: nodeID, name: "Diffusion B", direction: .input, kind: .scalarSignal("diffusionB")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):speed", nodeID: nodeID, name: "Speed", direction: .input, kind: .scalarSignal("speed")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):seed", nodeID: nodeID, name: "Seed", direction: .input, kind: .scalarSignal("seed")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):inputdrive", nodeID: nodeID, name: "Input Drive", direction: .input, kind: .scalarSignal("inputDrive")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):displayboost", nodeID: nodeID, name: "Display Boost", direction: .input, kind: .scalarSignal("displayBoost")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):hueshift", nodeID: nodeID, name: "Hue Shift", direction: .input, kind: .scalarSignal("hueShift")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):saturation", nodeID: nodeID, name: "Saturation", direction: .input, kind: .scalarSignal("saturation")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):sourcecolor", nodeID: nodeID, name: "Source Color", direction: .input, kind: .scalarSignal("sourceColor")),
+            GraphPort(id: "reactiondiffusion:\(nodeID.uuidString):reset", nodeID: nodeID, name: "Reset", direction: .input, kind: .scalarSignal("reset"))
+        ]
     }
 
     func addClearNode(at position: CGPoint) {
@@ -8309,7 +8392,7 @@ final class GraphStore: ObservableObject {
         presentOpenPanel(
             configure: { panel in
                 panel.allowedContentTypes = [
-                    "dae", "usdz", "usd", "usda", "usdc", "scn", "obj"
+                    "dae", "fbx", "usdz", "usd", "usda", "usdc", "scn", "obj"
                 ].compactMap { UTType(filenameExtension: $0) }
             },
             onSelection: { [weak self] url in
@@ -8452,18 +8535,20 @@ final class GraphStore: ObservableObject {
 
     private func attachScene3DModelFile(_ url: URL, to nodeID: GraphNode.ID?, at position: CGPoint?) {
         let bookmark = (try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)) ?? Data()
+        let parentBookmark = (try? url.deletingLastPathComponent().bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)) ?? Data()
         let filename = url.lastPathComponent
 
         if let nodeID, node(withID: nodeID) != nil {
             updateScene3DModelNodeSettings(nodeID) { settings in
                 settings.filename = filename
                 settings.bookmarkData = bookmark
+                settings.parentFolderBookmarkData = parentBookmark
             }
             statusMessage = "Loaded \(filename)."
             return
         }
 
-        addScene3DModelNode(at: position ?? CGPoint(x: 200, y: 200), filename: filename, bookmarkData: bookmark)
+        addScene3DModelNode(at: position ?? CGPoint(x: 200, y: 200), filename: filename, bookmarkData: bookmark, parentFolderBookmarkData: parentBookmark)
         statusMessage = "Loaded \(filename)."
     }
 
@@ -9335,6 +9420,47 @@ final class GraphStore: ObservableObject {
         statusMessage = "Added \(newNode.title) to the graph."
     }
 
+    func addScene3DTileNode(at position: CGPoint) {
+        let nodeIndex = document.nodes.reduce(0) { partialResult, node in
+            guard case .scene3DTile = node.kind else { return partialResult }
+            return partialResult + 1
+        } + 1
+        let nodeID = UUID()
+        let newNode = GraphNode(
+            id: nodeID,
+            title: nodeIndex == 1 ? "3D Tile" : "3D Tile \(nodeIndex)",
+            kind: .scene3DTile,
+            position: position,
+            inputPorts: makeScene3DTileInputPorts(nodeID: nodeID),
+            outputPorts: [
+                GraphPort(id: "scene3dtile:\(nodeID.uuidString):output", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene"))
+            ]
+        )
+
+        var updatedDocument = document
+        updatedDocument.nodes.append(newNode)
+        document = updatedDocument
+        scene3DTileNodeSettings[nodeID] = Scene3DTileNodeSettings()
+        selectedNodeID = newNode.id
+        inspectorFocusTarget = .nodeLibrary
+        statusMessage = "Added \(newNode.title) to the graph."
+    }
+
+    private func makeScene3DTileInputPorts(nodeID: GraphNode.ID) -> [GraphPort] {
+        [
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):scene", nodeID: nodeID, name: "Scene", direction: .input, kind: .scene3DSignal("scene")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):centerX", nodeID: nodeID, name: "Center X", direction: .input, kind: .scalarSignal("centerX")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):centerY", nodeID: nodeID, name: "Center Y", direction: .input, kind: .scalarSignal("centerY")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):centerZ", nodeID: nodeID, name: "Center Z", direction: .input, kind: .scalarSignal("centerZ")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):spacingX", nodeID: nodeID, name: "Spacing X", direction: .input, kind: .scalarSignal("spacingX")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):spacingY", nodeID: nodeID, name: "Spacing Y", direction: .input, kind: .scalarSignal("spacingY")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):spacingZ", nodeID: nodeID, name: "Spacing Z", direction: .input, kind: .scalarSignal("spacingZ")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):fieldX", nodeID: nodeID, name: "Field X", direction: .input, kind: .scalarSignal("fieldX")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):fieldY", nodeID: nodeID, name: "Field Y", direction: .input, kind: .scalarSignal("fieldY")),
+            GraphPort(id: "scene3dtile:\(nodeID.uuidString):fieldZ", nodeID: nodeID, name: "Field Z", direction: .input, kind: .scalarSignal("fieldZ"))
+        ]
+    }
+
     func addScene3DRenderNode(at position: CGPoint) {
         let nodeIndex = document.nodes.reduce(0) { partialResult, node in
             guard case .scene3DRender = node.kind else { return partialResult }
@@ -9442,7 +9568,12 @@ final class GraphStore: ObservableObject {
         statusMessage = "Added \(newNode.title) to the graph."
     }
 
-    func addScene3DModelNode(at position: CGPoint, filename: String = "Model", bookmarkData: Data = Data()) {
+    func addScene3DModelNode(
+        at position: CGPoint,
+        filename: String = "Model",
+        bookmarkData: Data = Data(),
+        parentFolderBookmarkData: Data = Data()
+    ) {
         let nodeIndex = document.nodes.reduce(0) { partialResult, node in
             guard case .scene3DModel = node.kind else { return partialResult }
             return partialResult + 1
@@ -9463,7 +9594,9 @@ final class GraphStore: ObservableObject {
         var updatedDocument = document
         updatedDocument.nodes.append(newNode)
         document = updatedDocument
-        scene3DModelNodeSettings[nodeID] = Scene3DModelNodeSettings(filename: filename, bookmarkData: bookmarkData)
+        var settings = Scene3DModelNodeSettings(filename: filename, bookmarkData: bookmarkData)
+        settings.parentFolderBookmarkData = parentFolderBookmarkData
+        scene3DModelNodeSettings[nodeID] = settings
         selectedNodeID = newNode.id
         inspectorFocusTarget = .nodeLibrary
         statusMessage = "Added \(newNode.title) to the graph."
@@ -9674,7 +9807,9 @@ final class GraphStore: ObservableObject {
             GraphPort(id: "scene3d:\(nodeID.uuidString):rotationY", nodeID: nodeID, name: "Rotation Y", direction: .input, kind: .scalarSignal("rotationY")),
             GraphPort(id: "scene3d:\(nodeID.uuidString):rotationZ", nodeID: nodeID, name: "Rotation Z", direction: .input, kind: .scalarSignal("rotationZ")),
             GraphPort(id: "scene3d:\(nodeID.uuidString):lightIntensity", nodeID: nodeID, name: "Light", direction: .input, kind: .scalarSignal("light")),
-            GraphPort(id: "scene3d:\(nodeID.uuidString):color", nodeID: nodeID, name: "Color", direction: .input, kind: .colorSignal("color"))
+            GraphPort(id: "scene3d:\(nodeID.uuidString):color", nodeID: nodeID, name: "Color", direction: .input, kind: .colorSignal("color")),
+            GraphPort(id: "scene3d:\(nodeID.uuidString):terrainWidth", nodeID: nodeID, name: "Terrain Width", direction: .input, kind: .scalarSignal("terrainWidth")),
+            GraphPort(id: "scene3d:\(nodeID.uuidString):terrainDepth", nodeID: nodeID, name: "Terrain Depth", direction: .input, kind: .scalarSignal("terrainDepth"))
         ]
     }
 
@@ -9710,7 +9845,13 @@ final class GraphStore: ObservableObject {
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):metallic", nodeID: nodeID, name: "Metallic", direction: .input, kind: .scalarSignal("metallic")),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):roughness", nodeID: nodeID, name: "Roughness", direction: .input, kind: .scalarSignal("roughness")),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):emission", nodeID: nodeID, name: "Emission", direction: .input, kind: .scalarSignal("emission")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):displacementScale", nodeID: nodeID, name: "Displacement Scale", direction: .input, kind: .scalarSignal("displacementScale")),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):doubleSided", nodeID: nodeID, name: "Double Sided", direction: .input, kind: .scalarSignal("doubleSided")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):wireframe", nodeID: nodeID, name: "Wireframe", direction: .input, kind: .scalarSignal("wireframe")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):projection", nodeID: nodeID, name: "Projection", direction: .input, kind: .scalarSignal("projection")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):textureScale", nodeID: nodeID, name: "Texture Scale", direction: .input, kind: .scalarSignal("textureScale")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):textureOffsetX", nodeID: nodeID, name: "Texture Offset X", direction: .input, kind: .scalarSignal("textureOffsetX")),
+            GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):textureOffsetY", nodeID: nodeID, name: "Texture Offset Y", direction: .input, kind: .scalarSignal("textureOffsetY")),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):diffuse", nodeID: nodeID, name: "Diffuse", direction: .input, kind: .fragmentShader),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):specular", nodeID: nodeID, name: "Specular", direction: .input, kind: .fragmentShader),
             GraphPort(id: "scene3dmaterial:\(nodeID.uuidString):metallicMap", nodeID: nodeID, name: "Metallic Map", direction: .input, kind: .fragmentShader),
@@ -9937,7 +10078,7 @@ final class GraphStore: ObservableObject {
             })?.id
             statusMessage = "\(node.title) removed from graph."
             updateInspectorFocus()
-        case .scene3DTransform:
+        case .scene3DTransform, .scene3DTile:
             var updatedDocument = document
             updatedDocument.nodes.removeAll { $0.id == nodeID }
             let removedPortIDs = Set(node.allPorts.map(\.id))
@@ -9946,6 +10087,7 @@ final class GraphStore: ObservableObject {
             }
             document = updatedDocument
             scene3DTransformNodeSettings.removeValue(forKey: nodeID)
+            scene3DTileNodeSettings.removeValue(forKey: nodeID)
             selectedNodeID = nil
             selectedNodeIDs.remove(nodeID)
             inspectorFocusTarget = .nodeLibrary
@@ -11157,7 +11299,7 @@ final class GraphStore: ObservableObject {
             selectedNodeID = primaryFragmentNode?.id
             inspectorFocusTarget = .nodeLibrary
             statusMessage = "Webcam removed from graph."
-        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow:
+        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow:
             var updatedDocument = document
             updatedDocument.nodes.removeAll { $0.id == nodeID }
             let removedPortIDs = Set(node.allPorts.map(\.id))
@@ -11190,6 +11332,18 @@ final class GraphStore: ObservableObject {
             }
             document = updatedDocument
             feedbackNodeSettings.removeValue(forKey: nodeID)
+            selectedNodeID = primaryFragmentNode?.id
+            inspectorFocusTarget = .nodeLibrary
+            statusMessage = "\(node.title) removed from graph."
+        case .reactionDiffusion:
+            var updatedDocument = document
+            updatedDocument.nodes.removeAll { $0.id == nodeID }
+            let removedPortIDs = Set(node.allPorts.map(\.id))
+            updatedDocument.connections.removeAll {
+                removedPortIDs.contains($0.fromPortID) || removedPortIDs.contains($0.toPortID)
+            }
+            document = updatedDocument
+            reactionDiffusionNodeSettings.removeValue(forKey: nodeID)
             selectedNodeID = primaryFragmentNode?.id
             inspectorFocusTarget = .nodeLibrary
             statusMessage = "\(node.title) removed from graph."
@@ -11726,6 +11880,10 @@ final class GraphStore: ObservableObject {
         addPresetFragmentNode(title: "Frame Melt", metalSource: Self.frameMeltPresetMetalSource, at: position)
     }
 
+    func addReactionDiffusionFragmentNode(at position: CGPoint) {
+        addReactionDiffusionNode(at: position)
+    }
+
     func addPrismSplitFragmentNode(at position: CGPoint) {
         addPresetFragmentNode(title: "Prism Split", metalSource: Self.prismSplitPresetMetalSource, at: position)
     }
@@ -11740,6 +11898,10 @@ final class GraphStore: ObservableObject {
 
     func addPhyllotaxisPetalSpiralFragmentNode(at position: CGPoint) {
         addPresetFragmentNode(title: "Phyllotaxis Petal Spiral", metalSource: Self.phyllotaxisPetalSpiralPresetMetalSource, at: position)
+    }
+
+    func addFBMNoiseHeightMapFragmentNode(at position: CGPoint) {
+        addPresetFragmentNode(title: "FBM Noise Height Map", metalSource: Self.fbmNoiseHeightMapPresetMetalSource, at: position)
     }
 
     func addRenderNode(at position: CGPoint) {
@@ -12014,6 +12176,8 @@ final class GraphStore: ObservableObject {
             return settings(forRenderWindowNodeID: node.id).x
         case .renderWindow where port.name == "Y":
             return settings(forRenderWindowNodeID: node.id).y
+        case .renderWindow where port.name == "FPS":
+            return settings(forRenderWindowNodeID: node.id).fps
         case .scalarMultiplexor where port.name == "Index":
             return settings(forScalarArrayIndexNodeID: node.id).index
         case .stringMultiplexor where port.name == "Index":
@@ -12070,6 +12234,30 @@ final class GraphStore: ObservableObject {
             return settings(forVideoPlayerNodeID: node.id).volume
         case .feedback where port.name == "Level":
             return settings(forFeedbackNodeID: node.id).level
+        case .reactionDiffusion where port.name == "Feed":
+            return settings(forReactionDiffusionNodeID: node.id).feed
+        case .reactionDiffusion where port.name == "Kill":
+            return settings(forReactionDiffusionNodeID: node.id).kill
+        case .reactionDiffusion where port.name == "Diffusion A":
+            return settings(forReactionDiffusionNodeID: node.id).diffusionA
+        case .reactionDiffusion where port.name == "Diffusion B":
+            return settings(forReactionDiffusionNodeID: node.id).diffusionB
+        case .reactionDiffusion where port.name == "Speed":
+            return settings(forReactionDiffusionNodeID: node.id).speed
+        case .reactionDiffusion where port.name == "Seed":
+            return settings(forReactionDiffusionNodeID: node.id).seed
+        case .reactionDiffusion where port.name == "Input Drive":
+            return settings(forReactionDiffusionNodeID: node.id).inputDrive
+        case .reactionDiffusion where port.name == "Display Boost":
+            return settings(forReactionDiffusionNodeID: node.id).displayBoost
+        case .reactionDiffusion where port.name == "Hue Shift":
+            return settings(forReactionDiffusionNodeID: node.id).hueShift
+        case .reactionDiffusion where port.name == "Saturation":
+            return settings(forReactionDiffusionNodeID: node.id).saturation
+        case .reactionDiffusion where port.name == "Source Color":
+            return settings(forReactionDiffusionNodeID: node.id).sourceColor
+        case .reactionDiffusion where port.name == "Reset":
+            return settings(forReactionDiffusionNodeID: node.id).reset
         case .circle where port.name == "Radius":
             return settings(forCircleNodeID: node.id).radius
         case .circle where port.name == "Softness":
@@ -12186,6 +12374,24 @@ final class GraphStore: ObservableObject {
             return settings(forScene3DTransformNodeID: node.id).rotationY
         case .scene3DTransform where port.name == "Rotation Z":
             return settings(forScene3DTransformNodeID: node.id).rotationZ
+        case .scene3DTile where port.name == "Center X":
+            return settings(forScene3DTileNodeID: node.id).centerX
+        case .scene3DTile where port.name == "Center Y":
+            return settings(forScene3DTileNodeID: node.id).centerY
+        case .scene3DTile where port.name == "Center Z":
+            return settings(forScene3DTileNodeID: node.id).centerZ
+        case .scene3DTile where port.name == "Spacing X":
+            return settings(forScene3DTileNodeID: node.id).spacingX
+        case .scene3DTile where port.name == "Spacing Y":
+            return settings(forScene3DTileNodeID: node.id).spacingY
+        case .scene3DTile where port.name == "Spacing Z":
+            return settings(forScene3DTileNodeID: node.id).spacingZ
+        case .scene3DTile where port.name == "Field X":
+            return settings(forScene3DTileNodeID: node.id).fieldX
+        case .scene3DTile where port.name == "Field Y":
+            return settings(forScene3DTileNodeID: node.id).fieldY
+        case .scene3DTile where port.name == "Field Z":
+            return settings(forScene3DTileNodeID: node.id).fieldZ
         case .scene3DMaterial where port.name == "Opacity":
             return settings(forScene3DMaterialNodeID: node.id).alpha
         case .scene3DMaterial where port.name == "Metallic":
@@ -12194,8 +12400,20 @@ final class GraphStore: ObservableObject {
             return settings(forScene3DMaterialNodeID: node.id).roughness
         case .scene3DMaterial where port.name == "Emission":
             return settings(forScene3DMaterialNodeID: node.id).emission
+        case .scene3DMaterial where port.name == "Displacement Scale":
+            return settings(forScene3DMaterialNodeID: node.id).displacementScale
         case .scene3DMaterial where port.name == "Double Sided":
             return settings(forScene3DMaterialNodeID: node.id).doubleSided ? 1.0 : 0.0
+        case .scene3DMaterial where port.name == "Wireframe":
+            return settings(forScene3DMaterialNodeID: node.id).wireframe ? 1.0 : 0.0
+        case .scene3DMaterial where port.name == "Projection":
+            return settings(forScene3DMaterialNodeID: node.id).textureProjection.scalarValue
+        case .scene3DMaterial where port.name == "Texture Scale":
+            return settings(forScene3DMaterialNodeID: node.id).textureScale
+        case .scene3DMaterial where port.name == "Texture Offset X":
+            return settings(forScene3DMaterialNodeID: node.id).textureOffsetX
+        case .scene3DMaterial where port.name == "Texture Offset Y":
+            return settings(forScene3DMaterialNodeID: node.id).textureOffsetY
         case .scene3DPrimitive where port.name == "X":
             return settings(forScene3DPrimitiveNodeID: node.id).positionX
         case .scene3DPrimitive where port.name == "Y":
@@ -12222,6 +12440,10 @@ final class GraphStore: ObservableObject {
             return settings(forScene3DPrimitiveNodeID: node.id).cameraPanY
         case .scene3DPrimitive where port.name == "Light":
             return settings(forScene3DPrimitiveNodeID: node.id).lightIntensity
+        case .scene3DPrimitive where port.name == "Terrain Width":
+            return settings(forScene3DPrimitiveNodeID: node.id).terrainWidth
+        case .scene3DPrimitive where port.name == "Terrain Depth":
+            return settings(forScene3DPrimitiveNodeID: node.id).terrainDepth
         case .scene3DText where port.name == "X":
             return settings(forScene3DTextNodeID: node.id).positionX
         case .scene3DText where port.name == "Y":
@@ -12705,6 +12927,8 @@ final class GraphStore: ObservableObject {
             updateRenderWindowNodeSettings(node.id) { $0.x = value }
         case .renderWindow where port.name == "Y":
             updateRenderWindowNodeSettings(node.id) { $0.y = value }
+        case .renderWindow where port.name == "FPS":
+            updateRenderWindowNodeSettings(node.id) { $0.fps = max(1.0, min(120.0, value)) }
         case .scalarMultiplexor where port.name == "Index":
             updateScalarArrayIndexNodeSettings(node.id) { $0.index = max(0.0, value) }
         case .stringMultiplexor where port.name == "Index":
@@ -12763,6 +12987,30 @@ final class GraphStore: ObservableObject {
             updateVideoPlayerNodeSettings(node.id) { $0.volume = value }
         case .feedback where port.name == "Level":
             updateFeedbackNodeSettings(node.id) { $0.level = value }
+        case .reactionDiffusion where port.name == "Feed":
+            updateReactionDiffusionNodeSettings(node.id) { $0.feed = value }
+        case .reactionDiffusion where port.name == "Kill":
+            updateReactionDiffusionNodeSettings(node.id) { $0.kill = value }
+        case .reactionDiffusion where port.name == "Diffusion A":
+            updateReactionDiffusionNodeSettings(node.id) { $0.diffusionA = value }
+        case .reactionDiffusion where port.name == "Diffusion B":
+            updateReactionDiffusionNodeSettings(node.id) { $0.diffusionB = value }
+        case .reactionDiffusion where port.name == "Speed":
+            updateReactionDiffusionNodeSettings(node.id) { $0.speed = value }
+        case .reactionDiffusion where port.name == "Seed":
+            updateReactionDiffusionNodeSettings(node.id) { $0.seed = value }
+        case .reactionDiffusion where port.name == "Input Drive":
+            updateReactionDiffusionNodeSettings(node.id) { $0.inputDrive = value }
+        case .reactionDiffusion where port.name == "Display Boost":
+            updateReactionDiffusionNodeSettings(node.id) { $0.displayBoost = value }
+        case .reactionDiffusion where port.name == "Hue Shift":
+            updateReactionDiffusionNodeSettings(node.id) { $0.hueShift = value }
+        case .reactionDiffusion where port.name == "Saturation":
+            updateReactionDiffusionNodeSettings(node.id) { $0.saturation = value }
+        case .reactionDiffusion where port.name == "Source Color":
+            updateReactionDiffusionNodeSettings(node.id) { $0.sourceColor = value }
+        case .reactionDiffusion where port.name == "Reset":
+            updateReactionDiffusionNodeSettings(node.id) { $0.reset = value }
         case .circle where port.name == "Radius":
             updateCircleNodeSettings(node.id) { $0.radius = value }
         case .circle where port.name == "Softness":
@@ -12879,6 +13127,24 @@ final class GraphStore: ObservableObject {
             updateScene3DTransformNodeSettings(node.id) { $0.rotationY = value }
         case .scene3DTransform where port.name == "Rotation Z":
             updateScene3DTransformNodeSettings(node.id) { $0.rotationZ = value }
+        case .scene3DTile where port.name == "Center X":
+            updateScene3DTileNodeSettings(node.id) { $0.centerX = value }
+        case .scene3DTile where port.name == "Center Y":
+            updateScene3DTileNodeSettings(node.id) { $0.centerY = value }
+        case .scene3DTile where port.name == "Center Z":
+            updateScene3DTileNodeSettings(node.id) { $0.centerZ = value }
+        case .scene3DTile where port.name == "Spacing X":
+            updateScene3DTileNodeSettings(node.id) { $0.spacingX = value }
+        case .scene3DTile where port.name == "Spacing Y":
+            updateScene3DTileNodeSettings(node.id) { $0.spacingY = value }
+        case .scene3DTile where port.name == "Spacing Z":
+            updateScene3DTileNodeSettings(node.id) { $0.spacingZ = value }
+        case .scene3DTile where port.name == "Field X":
+            updateScene3DTileNodeSettings(node.id) { $0.fieldX = value }
+        case .scene3DTile where port.name == "Field Y":
+            updateScene3DTileNodeSettings(node.id) { $0.fieldY = value }
+        case .scene3DTile where port.name == "Field Z":
+            updateScene3DTileNodeSettings(node.id) { $0.fieldZ = value }
         case .scene3DMaterial where port.name == "Opacity":
             updateScene3DMaterialNodeSettings(node.id) { $0.alpha = value }
         case .scene3DMaterial where port.name == "Metallic":
@@ -12887,8 +13153,20 @@ final class GraphStore: ObservableObject {
             updateScene3DMaterialNodeSettings(node.id) { $0.roughness = value }
         case .scene3DMaterial where port.name == "Emission":
             updateScene3DMaterialNodeSettings(node.id) { $0.emission = value }
+        case .scene3DMaterial where port.name == "Displacement Scale":
+            updateScene3DMaterialNodeSettings(node.id) { $0.displacementScale = value }
         case .scene3DMaterial where port.name == "Double Sided":
             updateScene3DMaterialNodeSettings(node.id) { $0.doubleSided = value >= 0.5 }
+        case .scene3DMaterial where port.name == "Wireframe":
+            updateScene3DMaterialNodeSettings(node.id) { $0.wireframe = value >= 0.5 }
+        case .scene3DMaterial where port.name == "Projection":
+            updateScene3DMaterialNodeSettings(node.id) { $0.textureProjection = Scene3DTextureProjection.fromScalar(value) }
+        case .scene3DMaterial where port.name == "Texture Scale":
+            updateScene3DMaterialNodeSettings(node.id) { $0.textureScale = value }
+        case .scene3DMaterial where port.name == "Texture Offset X":
+            updateScene3DMaterialNodeSettings(node.id) { $0.textureOffsetX = value }
+        case .scene3DMaterial where port.name == "Texture Offset Y":
+            updateScene3DMaterialNodeSettings(node.id) { $0.textureOffsetY = value }
         case .scene3DPrimitive where port.name == "X":
             updateScene3DPrimitiveNodeSettings(node.id) { $0.positionX = value }
         case .scene3DPrimitive where port.name == "Y":
@@ -12915,6 +13193,10 @@ final class GraphStore: ObservableObject {
             updateScene3DPrimitiveNodeSettings(node.id) { $0.cameraPanY = value }
         case .scene3DPrimitive where port.name == "Light":
             updateScene3DPrimitiveNodeSettings(node.id) { $0.lightIntensity = value }
+        case .scene3DPrimitive where port.name == "Terrain Width":
+            updateScene3DPrimitiveNodeSettings(node.id) { $0.terrainWidth = value }
+        case .scene3DPrimitive where port.name == "Terrain Depth":
+            updateScene3DPrimitiveNodeSettings(node.id) { $0.terrainDepth = value }
         case .scene3DText where port.name == "X":
             updateScene3DTextNodeSettings(node.id) { $0.positionX = value }
         case .scene3DText where port.name == "Y":
@@ -14680,6 +14962,26 @@ final class GraphStore: ObservableObject {
         objectWillChange.send()
     }
 
+    func settings(forScene3DTileNodeID nodeID: GraphNode.ID) -> Scene3DTileNodeSettings {
+        scene3DTileNodeSettings[nodeID] ?? Scene3DTileNodeSettings()
+    }
+
+    func updateScene3DTileNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout Scene3DTileNodeSettings) -> Void) {
+        var settings = settings(forScene3DTileNodeID: nodeID)
+        mutate(&settings)
+        settings.centerX = min(max(settings.centerX, -10_000.0), 10_000.0)
+        settings.centerY = min(max(settings.centerY, -10_000.0), 10_000.0)
+        settings.centerZ = min(max(settings.centerZ, -10_000.0), 10_000.0)
+        settings.spacingX = min(max(settings.spacingX, 0.0), 1_000.0)
+        settings.spacingY = min(max(settings.spacingY, 0.0), 1_000.0)
+        settings.spacingZ = min(max(settings.spacingZ, 0.0), 1_000.0)
+        settings.fieldX = min(max(settings.fieldX, 0.0), 10_000.0)
+        settings.fieldY = min(max(settings.fieldY, 0.0), 10_000.0)
+        settings.fieldZ = min(max(settings.fieldZ, 0.0), 10_000.0)
+        scene3DTileNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
     func settings(forScene3DRenderNodeID nodeID: GraphNode.ID) -> Scene3DRenderNodeSettings {
         scene3DRenderNodeSettings[nodeID] ?? Scene3DRenderNodeSettings()
     }
@@ -14804,10 +15106,21 @@ final class GraphStore: ObservableObject {
         settings.metallic = node.inputPorts.first(where: { $0.name == "Metallic" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.metallic
         settings.roughness = node.inputPorts.first(where: { $0.name == "Roughness" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.roughness
         settings.emission = node.inputPorts.first(where: { $0.name == "Emission" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.emission
+        settings.displacementScale = node.inputPorts.first(where: { $0.name == "Displacement Scale" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.displacementScale
         let doubleSidedValue = node.inputPorts.first(where: { $0.name == "Double Sided" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) }
         if let doubleSidedValue {
             settings.doubleSided = doubleSidedValue >= 0.5
         }
+        let wireframeValue = node.inputPorts.first(where: { $0.name == "Wireframe" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) }
+        if let wireframeValue {
+            settings.wireframe = wireframeValue >= 0.5
+        }
+        if let projectionValue = node.inputPorts.first(where: { $0.name == "Projection" }).flatMap({ resolvedScalarValue(forInputPortID: $0.id) }) {
+            settings.textureProjection = Scene3DTextureProjection.fromScalar(projectionValue)
+        }
+        settings.textureScale = node.inputPorts.first(where: { $0.name == "Texture Scale" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.textureScale
+        settings.textureOffsetX = node.inputPorts.first(where: { $0.name == "Texture Offset X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.textureOffsetX
+        settings.textureOffsetY = node.inputPorts.first(where: { $0.name == "Texture Offset Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.textureOffsetY
 
         settings.red = min(max(settings.red, 0.0), 1.0)
         settings.green = min(max(settings.green, 0.0), 1.0)
@@ -14816,6 +15129,10 @@ final class GraphStore: ObservableObject {
         settings.metallic = min(max(settings.metallic, 0.0), 1.0)
         settings.roughness = min(max(settings.roughness, 0.0), 1.0)
         settings.emission = min(max(settings.emission, 0.0), 1.0)
+        settings.displacementScale = min(max(settings.displacementScale, -10.0), 10.0)
+        settings.textureScale = min(max(settings.textureScale, 0.001), 100.0)
+        settings.textureOffsetX = min(max(settings.textureOffsetX, -1000.0), 1000.0)
+        settings.textureOffsetY = min(max(settings.textureOffsetY, -1000.0), 1000.0)
         return settings
     }
 
@@ -14829,6 +15146,10 @@ final class GraphStore: ObservableObject {
         settings.metallic = min(max(settings.metallic, 0.0), 1.0)
         settings.roughness = min(max(settings.roughness, 0.0), 1.0)
         settings.emission = min(max(settings.emission, 0.0), 1.0)
+        settings.displacementScale = min(max(settings.displacementScale, -10.0), 10.0)
+        settings.textureScale = min(max(settings.textureScale, 0.001), 100.0)
+        settings.textureOffsetX = min(max(settings.textureOffsetX, -1000.0), 1000.0)
+        settings.textureOffsetY = min(max(settings.textureOffsetY, -1000.0), 1000.0)
         scene3DMaterialNodeSettings[nodeID] = settings
         objectWillChange.send()
     }
@@ -14909,6 +15230,8 @@ final class GraphStore: ObservableObject {
         settings.cameraPanX = node.inputPorts.first(where: { $0.name == "Pan X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraPanX
         settings.cameraPanY = node.inputPorts.first(where: { $0.name == "Pan Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.cameraPanY
         settings.lightIntensity = node.inputPorts.first(where: { $0.name == "Light" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.lightIntensity
+        settings.terrainWidth = node.inputPorts.first(where: { $0.name == "Terrain Width" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.terrainWidth
+        settings.terrainDepth = node.inputPorts.first(where: { $0.name == "Terrain Depth" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.terrainDepth
         if let tint = node.inputPorts.first(where: { $0.name == "Color" }).flatMap({ resolvedColorValue(forInputPortID: $0.id) }) {
             settings.materialRed = Double(tint.x)
             settings.materialGreen = Double(tint.y)
@@ -14936,6 +15259,9 @@ final class GraphStore: ObservableObject {
         settings.materialBlue = min(max(settings.materialBlue, 0.0), 1.0)
         settings.materialAlpha = min(max(settings.materialAlpha, 0.0), 1.0)
         settings.backgroundAlpha = min(max(settings.backgroundAlpha, 0.0), 1.0)
+        settings.terrainWidth = min(max(settings.terrainWidth, 0.5), 500.0)
+        settings.terrainDepth = min(max(settings.terrainDepth, 0.5), 500.0)
+        settings.terrainSegments = min(max(settings.terrainSegments.rounded(), 2.0), 256.0)
         scene3DPrimitiveNodeSettings[nodeID] = settings
         objectWillChange.send()
     }
@@ -15387,6 +15713,10 @@ final class GraphStore: ObservableObject {
         feedbackNodeSettings[nodeID] ?? FeedbackNodeSettings()
     }
 
+    func settings(forReactionDiffusionNodeID nodeID: GraphNode.ID) -> ReactionDiffusionNodeSettings {
+        reactionDiffusionNodeSettings[nodeID] ?? ReactionDiffusionNodeSettings()
+    }
+
     func settings(forCoreImageNodeID nodeID: GraphNode.ID) -> CoreImageNodeSettings {
         coreImageNodeSettings[nodeID] ?? CoreImageNodeSettings()
     }
@@ -15418,6 +15748,29 @@ final class GraphStore: ObservableObject {
         mutate(&settings)
         settings.level = min(max(settings.level, 0.0), 0.999)
         feedbackNodeSettings[nodeID] = settings
+        objectWillChange.send()
+    }
+
+    func updateReactionDiffusionNodeSettings(_ nodeID: GraphNode.ID, mutate: (inout ReactionDiffusionNodeSettings) -> Void) {
+        var settings = reactionDiffusionNodeSettings[nodeID] ?? ReactionDiffusionNodeSettings()
+        mutate(&settings)
+        settings.feed = min(max(settings.feed, 0.0), 1.0)
+        settings.kill = min(max(settings.kill, 0.0), 1.0)
+        settings.diffusionA = min(max(settings.diffusionA, 0.0), 1.0)
+        settings.diffusionB = min(max(settings.diffusionB, 0.0), 1.0)
+        settings.speed = min(max(settings.speed, 0.0), 1.0)
+        settings.seed = min(max(settings.seed, 0.0), 1.0)
+        settings.inputDrive = min(max(settings.inputDrive, 0.0), 1.0)
+        settings.displayBoost = min(max(settings.displayBoost, 0.0), 1.0)
+        settings.hueShift = min(max(settings.hueShift, 0.0), 1.0)
+        settings.saturation = min(max(settings.saturation, 0.0), 1.0)
+        settings.sourceColor = min(max(settings.sourceColor, 0.0), 1.0)
+        settings.reset = min(max(settings.reset, 0.0), 1.0)
+        settings.red = min(max(settings.red, 0.0), 1.0)
+        settings.green = min(max(settings.green, 0.0), 1.0)
+        settings.blue = min(max(settings.blue, 0.0), 1.0)
+        settings.alpha = min(max(settings.alpha, 0.0), 1.0)
+        reactionDiffusionNodeSettings[nodeID] = settings
         objectWillChange.send()
     }
 
@@ -15515,6 +15868,7 @@ final class GraphStore: ObservableObject {
         pruneNoteNodeSettings()
         pruneTransformNodeSettings()
         pruneScene3DTransformNodeSettings()
+        pruneScene3DTileNodeSettings()
         pruneBillboardNodeSettings()
         pruneTransitionNodeSettings()
         pruneTrailNodeSettings()
@@ -15527,6 +15881,7 @@ final class GraphStore: ObservableObject {
         pruneLayerNodeSettings()
         pruneOSCNodeSettings()
         pruneFeedbackNodeSettings()
+        pruneReactionDiffusionNodeSettings()
         pruneCoreImageNodeSettings()
         pruneUnderwaterNodeSettings()
         setEditableSourceProgrammatically(parsed.source)
@@ -15629,6 +15984,7 @@ final class GraphStore: ObservableObject {
         pruneNoteNodeSettings()
         pruneTransformNodeSettings()
         pruneScene3DTransformNodeSettings()
+        pruneScene3DTileNodeSettings()
         pruneBillboardNodeSettings()
         pruneTransitionNodeSettings()
         pruneTrailNodeSettings()
@@ -15641,6 +15997,7 @@ final class GraphStore: ObservableObject {
         pruneLayerNodeSettings()
         pruneOSCNodeSettings()
         pruneFeedbackNodeSettings()
+        pruneReactionDiffusionNodeSettings()
         pruneCoreImageNodeSettings()
         pruneUnderwaterNodeSettings()
         reconnectPrimaryRenderIfNeeded()
@@ -15924,12 +16281,12 @@ final class GraphStore: ObservableObject {
 
     private func startPreviewMovieExport(to url: URL, renderNodeID: GraphNode.ID, duration: Double, fps: Int32) {
         openPreviewWindow(for: renderNodeID)
-        runGraph()
         activePreviewVideoExportRenderNodeID = renderNodeID
         let recorder = PreviewVideoRecorder(
             outputURL: url,
             duration: duration,
             fps: fps,
+            audioFormat: audioMonitor.currentRecordingFormat(),
             progress: { [weak self] message in
                 self?.statusMessage = message
             }
@@ -15937,6 +16294,9 @@ final class GraphStore: ObservableObject {
             guard let self else { return }
             self.activePreviewVideoRecorder = nil
             self.activePreviewVideoExportRenderNodeID = nil
+            self.isMovieAudioCaptureActive = false
+            self.audioMonitor.setExportTap(nil)
+            self.updateAudioMonitorState()
             switch result {
             case .success(let url):
                 self.statusMessage = "Exported movie to \(url.lastPathComponent)."
@@ -15944,7 +16304,13 @@ final class GraphStore: ObservableObject {
                 self.statusMessage = "Movie export failed: \(error.localizedDescription)"
             }
         }
+        isMovieAudioCaptureActive = true
+        audioMonitor.setExportTap { [weak recorder] buffer in
+            recorder?.captureAudio(buffer: buffer)
+        }
         activePreviewVideoRecorder = recorder
+        runGraph()
+        updateAudioMonitorState()
         statusMessage = "Recording \(Int(duration))s movie at \(fps) FPS..."
     }
 
@@ -16166,6 +16532,15 @@ final class GraphStore: ObservableObject {
         }
     }
 
+    func preferredPreviewWindowFramesPerSecond(for renderNodeID: GraphNode.ID) -> Int {
+        for node in document.nodes {
+            guard case .renderWindow = node.kind else { continue }
+            guard targetRenderNodeID(forRenderWindowNodeID: node.id) == renderNodeID else { continue }
+            return resolvedRenderWindowFramesPerSecond(forRenderWindowNodeID: node.id)
+        }
+        return 60
+    }
+
     private func targetRenderNodeID(forRenderWindowNodeID nodeID: GraphNode.ID) -> GraphNode.ID? {
         let settings = settings(forRenderWindowNodeID: nodeID)
         if let targetID = settings.targetRenderNodeID,
@@ -16207,6 +16582,15 @@ final class GraphStore: ObservableObject {
 
     private func resolvedRenderWindowLevelMode(forRenderWindowNodeID nodeID: GraphNode.ID) -> RenderWindowLevelMode {
         settings(forRenderWindowNodeID: nodeID).levelMode
+    }
+
+    private func resolvedRenderWindowFramesPerSecond(forRenderWindowNodeID nodeID: GraphNode.ID) -> Int {
+        guard let sourceNode = node(withID: nodeID), case .renderWindow = sourceNode.kind else {
+            return 60
+        }
+        let settings = settings(forRenderWindowNodeID: nodeID)
+        let value = sourceNode.inputPorts.first(where: { $0.name == "FPS" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.fps
+        return Int(max(1.0, min(120.0, value)).rounded())
     }
 
     private func preferredPreviewWindowContentSize(for renderNodeID: GraphNode.ID) -> CGSize? {
@@ -16364,7 +16748,7 @@ final class GraphStore: ObservableObject {
             inspectorFocusTarget = .nodeLibrary
         case .keyboard:
             inspectorFocusTarget = .nodeLibrary
-        case .scene3DTransform:
+        case .scene3DTransform, .scene3DTile:
             inspectorFocusTarget = .nodeLibrary
         case .scene3DRender:
             inspectorFocusTarget = .nodeLibrary
@@ -16592,11 +16976,15 @@ final class GraphStore: ObservableObject {
             inspectorFocusTarget = .nodeLibrary
         case .posterize:
             inspectorFocusTarget = .nodeLibrary
+        case .levels:
+            inspectorFocusTarget = .nodeLibrary
         case .glow:
             inspectorFocusTarget = .nodeLibrary
         case .underwater:
             inspectorFocusTarget = .nodeLibrary
         case .feedback:
+            inspectorFocusTarget = .nodeLibrary
+        case .reactionDiffusion:
             inspectorFocusTarget = .nodeLibrary
         case .transition:
             inspectorFocusTarget = .nodeLibrary
@@ -16787,6 +17175,7 @@ final class GraphStore: ObservableObject {
             $aiImageNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $layerNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $feedbackNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            $reactionDiffusionNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $coreImageNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             $underwaterNodeSettings.dropFirst().map { _ in () }.eraseToAnyPublisher()
         ]
@@ -16859,7 +17248,7 @@ final class GraphStore: ObservableObject {
             if case .beatDetect = node.kind { return true }
             return false
         }
-        audioMonitor.setMonitoringEnabled(hasAudioNode)
+        audioMonitor.setMonitoringEnabled(hasAudioNode || isMovieAudioCaptureActive)
     }
 
     private func updateVideoMonitorState() {
@@ -17298,6 +17687,7 @@ final class GraphStore: ObservableObject {
             billboardNodeSettings: billboardNodeSettings,
             lineNodeSettings: lineNodeSettings,
             scene3DTransformNodeSettings: scene3DTransformNodeSettings,
+            scene3DTileNodeSettings: scene3DTileNodeSettings,
             scene3DRenderNodeSettings: scene3DRenderNodeSettings,
             scene3DLightNodeSettings: scene3DLightNodeSettings,
             scene3DMaterialNodeSettings: scene3DMaterialNodeSettings,
@@ -17315,6 +17705,7 @@ final class GraphStore: ObservableObject {
             aiImageNodeSettings: aiImageNodeSettings,
             videoPlayerNodeSettings: videoPlayerNodeSettings,
             feedbackNodeSettings: feedbackNodeSettings,
+            reactionDiffusionNodeSettings: reactionDiffusionNodeSettings,
             coreImageNodeSettings: coreImageNodeSettings,
             underwaterNodeSettings: underwaterNodeSettings,
             layerNodeSettings: layerNodeSettings
@@ -18321,8 +18712,8 @@ final class GraphStore: ObservableObject {
 
         if let renderNode,
            let renderInput = renderNode.inputPorts.first(where: { $0.kind == .fragmentShader }),
+           document.connections.contains(where: { $0.toPortID == renderInput.id }) == false,
            let fragmentOutput = fragmentNode.outputPorts.first(where: { $0.kind == .fragmentShader }) {
-            document.connections.removeAll { $0.toPortID == renderInput.id }
             document.connections.append(GraphConnection(fromPortID: fragmentOutput.id, toPortID: renderInput.id))
         }
     }
@@ -18420,13 +18811,6 @@ final class GraphStore: ObservableObject {
            let timeOutput = timeNode.outputPorts.first,
            let timeInput = document.nodes.first(where: { $0.id == nodeID })?.inputPorts.first(where: { $0.kind == .time }) {
             connectPorts(from: timeOutput.id, to: timeInput.id)
-        }
-
-        if existingFragmentCount == 1,
-           let primaryRender = renderNode,
-           let renderInput = primaryRender.inputPorts.first(where: { $0.kind == .fragmentShader }),
-           let fragmentOutput = document.nodes.first(where: { $0.id == nodeID })?.outputPorts.first(where: { $0.kind == .fragmentShader }) {
-            connectPorts(from: fragmentOutput.id, to: renderInput.id)
         }
 
         baselineUniformValues.merge(Dictionary(uniqueKeysWithValues: mergedUniforms.map { ($0.id, $0.defaultValue) })) { current, _ in current }
@@ -22683,9 +23067,9 @@ final class GraphStore: ObservableObject {
     """
 
     private static let phyllotaxisPetalSpiralPresetMetalSource = """
-    /*
-    {
-      "DESCRIPTION": "Colored phyllotaxis petal spiral",
+/*
+{
+  "DESCRIPTION": "Colored phyllotaxis petal spiral",
       "INPUTS": [
         { "NAME": "SeedCount", "TYPE": "float", "DEFAULT": 0.75, "MIN": 0.0, "MAX": 1.0 },
         { "NAME": "Zoom", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0.0, "MAX": 1.0 },
@@ -22830,7 +23214,204 @@ final class GraphStore: ObservableObject {
         float3 lineColor = float3(0.0);
         float3 color = mix(cellColor, lineColor, lineMask);
 
-        return float4(color, 1.0);
+    return float4(color, 1.0);
+}
+"""
+
+    private static let fbmNoiseHeightMapPresetMetalSource = """
+/*
+{
+  "DESCRIPTION": "FBM noise height map",
+  "INPUTS": [
+    { "NAME": "Scale", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "Detail", "TYPE": "float", "DEFAULT": 0.6, "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "Contrast", "TYPE": "float", "DEFAULT": 0.5, "MIN": 0.0, "MAX": 1.0 },
+    { "NAME": "Animate", "TYPE": "float", "DEFAULT": 0.0, "MIN": 0.0, "MAX": 1.0 }
+  ]
+}
+*/
+
+#include <metal_stdlib>
+using namespace metal;
+
+float hash21(float2 p) {
+    p = fract(p * float2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float noise2d(float2 p) {
+    float2 i = floor(p);
+    float2 f = fract(p);
+
+    float a = hash21(i);
+    float b = hash21(i + float2(1.0, 0.0));
+    float c = hash21(i + float2(0.0, 1.0));
+    float d = hash21(i + float2(1.0, 1.0));
+
+    float2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(float2 p, int octaves) {
+    float v = 0.0;
+    float a = 0.5;
+
+    for (int i = 0; i < octaves; i++) {
+        v += noise2d(p) * a;
+        p *= 2.0;
+        a *= 0.5;
+    }
+
+    return v;
+}
+
+fragment float4 generatedFragment(RasterizerData in [[stage_in]],
+                                  constant PreviewUniforms& uniforms [[buffer(0)]],
+                                  constant float* floatUniforms [[buffer(1)]],
+                                  constant float4* colorUniforms [[buffer(2)]],
+                                  constant float2* pointUniforms [[buffer(3)]],
+                                  constant uint* boolUniforms [[buffer(4)]],
+                                  constant float3* point3Uniforms [[buffer(5)]],
+                                  constant float4* point4Uniforms [[buffer(6)]]) {
+
+    float Scale    = floatUniforms[0];
+    float Detail   = floatUniforms[1];
+    float Contrast = floatUniforms[2];
+    float Animate  = floatUniforms[3];
+
+    float2 uv = in.uv;
+    float t = uniforms.time * Animate * 2.0;
+
+    float scale = mix(1.0, 12.0, clamp(Scale, 0.0, 1.0));
+    int octaves = int(mix(2.0, 6.0, clamp(Detail, 0.0, 1.0)));
+
+    float n = fbm(uv * scale + float2(t, -t * 0.5), octaves);
+
+    float c = mix(0.5, 2.5, clamp(Contrast, 0.0, 1.0));
+    n = pow(clamp(n, 0.0, 1.0), c);
+
+    return float4(n, n, n, 1.0);
+}
+"""
+
+    private static let reactionDiffusionPresetMetalSource = """
+    /*
+    {
+      "DESCRIPTION": "Gray-Scott reaction diffusion feedback simulation",
+      "INPUTS": [
+        { "NAME": "Feed", "TYPE": "float", "DEFAULT": 0.52, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "Kill", "TYPE": "float", "DEFAULT": 0.42, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "DiffusionA", "TYPE": "float", "DEFAULT": 0.72, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "DiffusionB", "TYPE": "float", "DEFAULT": 0.38, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "Speed", "TYPE": "float", "DEFAULT": 0.62, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "Seed", "TYPE": "float", "DEFAULT": 0.45, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "InputDrive", "TYPE": "float", "DEFAULT": 0.15, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "DisplayBoost", "TYPE": "float", "DEFAULT": 0.7, "MIN": 0.0, "MAX": 1.0 },
+        { "NAME": "Tint", "TYPE": "color", "DEFAULT": [0.2, 0.95, 0.85, 1.0] },
+        { "NAME": "Invert", "TYPE": "bool", "DEFAULT": false },
+        { "NAME": "texture", "TYPE": "image", "DEFAULT": "Texture" },
+        { "NAME": "feedback", "TYPE": "image", "DEFAULT": "Texture" }
+      ]
+    }
+    */
+
+    #include <metal_stdlib>
+    using namespace metal;
+
+    float luminance(float3 c) {
+        return dot(c, float3(0.299, 0.587, 0.114));
+    }
+
+    float hash21(float2 p) {
+        p = fract(p * float2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+    }
+
+    float readRDValue(texture2d<float> feedbackTexture,
+                      sampler feedbackTextureSampler,
+                      float2 uv) {
+        float4 state = feedbackTexture.sample(feedbackTextureSampler, clamp(uv, 0.0, 1.0));
+
+        bool empty = dot(state.rgb, float3(1.0)) < 0.001;
+        bool fallbackMagenta = state.r > 0.95 && state.b > 0.95 && state.g < 0.08;
+        if (empty || fallbackMagenta) {
+            return 0.0;
+        }
+
+        return clamp(luminance(state.rgb), 0.0, 1.0);
+    }
+
+    fragment float4 generatedFragment(RasterizerData in [[stage_in]],
+                                      constant PreviewUniforms& uniforms [[buffer(0)]],
+                                      constant float* floatUniforms [[buffer(1)]],
+                                      constant float4* colorUniforms [[buffer(2)]],
+                                      constant float2* pointUniforms [[buffer(3)]],
+                                      constant uint* boolUniforms [[buffer(4)]],
+                                      constant float3* point3Uniforms [[buffer(5)]],
+                                      constant float4* point4Uniforms [[buffer(6)]]) {
+        float Feed         = floatUniforms[0];
+        float Kill         = floatUniforms[1];
+        float DiffusionA   = floatUniforms[2];
+        float DiffusionB   = floatUniforms[3];
+        float Speed        = floatUniforms[4];
+        float Seed         = floatUniforms[5];
+        float InputDrive   = floatUniforms[6];
+        float DisplayBoost = floatUniforms[7];
+        float4 Tint        = colorUniforms[0];
+        bool Invert        = boolUniforms[0] != 0;
+
+        float2 uv = in.uv;
+        float2 texel = 1.0 / max(uniforms.resolution, float2(1.0));
+
+        float feed = mix(0.002, 0.045, clamp(Feed, 0.0, 1.0));
+        float kill = mix(0.004, 0.085, clamp(Kill, 0.0, 1.0));
+        float diffusion = mix(0.05, 0.72, clamp(DiffusionA, 0.0, 1.0));
+        float sharpening = mix(0.4, 2.6, clamp(DiffusionB, 0.0, 1.0));
+        float dt = mix(0.04, 0.42, clamp(Speed, 0.0, 1.0));
+
+        float c = readRDValue(feedback, feedbackSampler, uv);
+        float n = readRDValue(feedback, feedbackSampler, uv + float2(0.0, texel.y));
+        float s = readRDValue(feedback, feedbackSampler, uv - float2(0.0, texel.y));
+        float e = readRDValue(feedback, feedbackSampler, uv + float2(texel.x, 0.0));
+        float w = readRDValue(feedback, feedbackSampler, uv - float2(texel.x, 0.0));
+        float ne = readRDValue(feedback, feedbackSampler, uv + texel);
+        float nw = readRDValue(feedback, feedbackSampler, uv + float2(-texel.x, texel.y));
+        float se = readRDValue(feedback, feedbackSampler, uv + float2(texel.x, -texel.y));
+        float sw = readRDValue(feedback, feedbackSampler, uv - texel);
+
+        float lap = -c + (n + s + e + w) * 0.2 + (ne + nw + se + sw) * 0.05;
+
+        float2 centered = uv * 2.0 - 1.0;
+        centered.x *= uniforms.resolution.x / max(uniforms.resolution.y, 1.0);
+        float seedPattern = 1.0 - smoothstep(0.035, 0.18, length(centered));
+        seedPattern += smoothstep(0.995, 1.0, hash21(floor(uv * mix(10.0, 70.0, Seed + 0.001))));
+        seedPattern *= clamp(Seed, 0.0, 1.0) * 0.12;
+
+        float4 source = texture.sample(textureSampler, uv);
+        float sourceInk = smoothstep(0.30, 0.92, luminance(source.rgb));
+        sourceInk *= clamp(InputDrive, 0.0, 1.0) * 0.11;
+
+        float excitation = seedPattern + sourceInk + feed;
+        float growth = c * (1.0 - c) * (c - mix(0.18, 0.62, clamp(Kill, 0.0, 1.0)));
+        float edgePush = smoothstep(0.015, 0.15, abs(lap)) * sharpening * 0.035;
+
+        float v = c + (lap * diffusion + growth * sharpening + excitation - kill * c) * dt;
+        v += edgePush;
+        v *= mix(0.998, 0.94, clamp(Kill, 0.0, 1.0));
+        v = clamp(v, 0.0, 1.0);
+
+        float boost = mix(1.5, 6.0, clamp(DisplayBoost, 0.0, 1.0));
+        float displayValue = smoothstep(0.04, 0.82, v) * boost * 0.55;
+        displayValue = clamp(displayValue, 0.0, 1.0);
+        if (Invert) {
+            displayValue = 1.0 - displayValue;
+        }
+
+        float edge = clamp(abs(lap) * 10.0, 0.0, 1.0);
+        float3 display = mix(float3(displayValue), Tint.rgb * displayValue + edge * 0.25, 0.78);
+        return float4(clamp(display, 0.0, 1.0), 1.0);
     }
     """
 
@@ -22890,6 +23471,8 @@ final class GraphStore: ObservableObject {
             return temporalGhostTrailsPresetMetalSource
         case "frame melt", "framemelt":
             return frameMeltPresetMetalSource
+        case "reaction diffusion", "reactiondiffusion":
+            return reactionDiffusionPresetMetalSource
         case "prism split":
             return prismSplitPresetMetalSource
         case "ghost frame echo":
@@ -22898,6 +23481,8 @@ final class GraphStore: ObservableObject {
             return pixelSortBandsPresetMetalSource
         case "phyllotaxis petal spiral":
             return phyllotaxisPetalSpiralPresetMetalSource
+        case "fbm noise height map", "fbmnoiseheightmap":
+            return fbmNoiseHeightMapPresetMetalSource
         default:
             return nil
         }
@@ -22954,7 +23539,7 @@ final class GraphStore: ObservableObject {
         case .mix:
             return fragmentNodeID(forMixNodeID: sourceNode.id, inputName: "Shader A")
                 ?? fragmentNodeID(forMixNodeID: sourceNode.id, inputName: "Shader B")
-        case .trail, .note, .textImage, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .layers, .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .scale, .interpolator, .hold, .scalarSmooth, .monitor, .renderOutput:
+        case .trail, .note, .textImage, .transform, .billboard, .line, .scene3DTransform, .scene3DTile, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow, .underwater, .feedback, .reactionDiffusion, .transition, .layers, .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .scale, .interpolator, .hold, .scalarSmooth, .monitor, .renderOutput:
             return nil
         }
     }
@@ -23853,7 +24438,7 @@ final class GraphStore: ObservableObject {
             default:
                 return nil
             }
-        case .scene3DTransform:
+        case .scene3DTransform, .scene3DTile:
             return nil
         case .depthEstimate:
             return depthEstimateOutput(from: sourceNode, outputName: outputPort.name, visitedNodeIDs: [sourceNode.id])
@@ -24214,6 +24799,12 @@ final class GraphStore: ObservableObject {
             return outputPort.name == "Value" ? ((runtime.outputFrame == frameID) ? 1.0 : 0.0) : nil
         case .timer:
             let settings = settings(forTimerNodeID: sourceNode.id)
+            if isGraphRunning == false {
+                var runtime = timerNodeRuntimeStates[sourceNode.id] ?? TimerNodeRuntimeState()
+                runtime.outputFrame = nil
+                timerNodeRuntimeStates[sourceNode.id] = runtime
+                return outputPort.name == "Value" ? 0.0 : nil
+            }
             let enabled = sourceNode.inputPorts.first(where: { $0.name == "Enabled" }).flatMap {
                 scalarValue(forInputPortID: $0.id, visitedNodeIDs: [sourceNode.id])
             } ?? settings.enabled
@@ -24225,7 +24816,7 @@ final class GraphStore: ObservableObject {
             let frameID = evaluationFrameID
             var runtime = timerNodeRuntimeStates[sourceNode.id] ?? TimerNodeRuntimeState()
             if isEnabledHigh {
-                let bucket = Int(floor(CACurrentMediaTime() / safeInterval))
+                let bucket = Int(floor(graphClockTime / safeInterval))
                 if runtime.lastEnabledHigh == false {
                     runtime.lastBucket = bucket
                     runtime.outputFrame = nil
@@ -25198,6 +25789,12 @@ final class GraphStore: ObservableObject {
                 return sourcePort.name == "Value" ? ((runtime.outputFrame == frameID) ? 1.0 : 0.0) : nil
             case .timer:
                 let settings = settings(forTimerNodeID: sourceNode.id)
+                if isGraphRunning == false {
+                    var runtime = timerNodeRuntimeStates[sourceNode.id] ?? TimerNodeRuntimeState()
+                    runtime.outputFrame = nil
+                    timerNodeRuntimeStates[sourceNode.id] = runtime
+                    return sourcePort.name == "Value" ? 0.0 : nil
+                }
                 let enabled = sourceNode.inputPorts.first(where: { $0.name == "Enabled" }).flatMap {
                     scalarValue(forInputPortID: $0.id, visitedNodeIDs: visitedNodeIDs.union([sourceNode.id]))
                 } ?? settings.enabled
@@ -25209,7 +25806,7 @@ final class GraphStore: ObservableObject {
                 let frameID = evaluationFrameID
                 var runtime = timerNodeRuntimeStates[sourceNode.id] ?? TimerNodeRuntimeState()
                 if isEnabledHigh {
-                    let bucket = Int(floor(CACurrentMediaTime() / safeInterval))
+                    let bucket = Int(floor(graphClockTime / safeInterval))
                     if runtime.lastEnabledHigh == false {
                         runtime.lastBucket = bucket
                         runtime.outputFrame = nil
@@ -25661,7 +26258,7 @@ final class GraphStore: ObservableObject {
             return .videoPlayer(PreviewVideoPlayerPass(nodeID: sourceNode.id))
         case .video:
             return .video
-        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow:
+        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow:
             guard
                 let effect = resolvedCoreImageEffect(for: sourceNode),
                 let sourceInput = sourceNode.inputPorts.first(where: { $0.name == "Source" }),
@@ -25719,6 +26316,38 @@ final class GraphStore: ObservableObject {
                 source: source,
                 level: Float(max(0.0, min(0.999, resolvedLevel))),
                 blendMode: settings.blendMode
+            ))
+        case .reactionDiffusion:
+            let settings = settings(forReactionDiffusionNodeID: sourceNode.id)
+            let source = sourceNode.inputPorts.first(where: { $0.name == "Texture" }).flatMap {
+                previewPassSource(forInputPortID: $0.id, visitedNodeIDs: childVisitedNodeIDs, activeFeedbackNodeID: childFeedbackNodeID)
+            }
+            func scalar(_ name: String, _ fallback: Double) -> Float {
+                Float(max(0.0, min(1.0, sourceNode.inputPorts.first(where: { $0.name == name }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? fallback)))
+            }
+            let tint = SIMD4<Float>(
+                Float(max(0.0, min(1.0, settings.red))),
+                Float(max(0.0, min(1.0, settings.green))),
+                Float(max(0.0, min(1.0, settings.blue))),
+                Float(max(0.0, min(1.0, settings.alpha)))
+            )
+            return .reactionDiffusion(PreviewReactionDiffusionPass(
+                nodeID: sourceNode.id,
+                source: source,
+                settings: settings,
+                feed: scalar("Feed", settings.feed),
+                kill: scalar("Kill", settings.kill),
+                diffusionA: scalar("Diffusion A", settings.diffusionA),
+                diffusionB: scalar("Diffusion B", settings.diffusionB),
+                speed: scalar("Speed", settings.speed),
+                seed: scalar("Seed", settings.seed),
+                inputDrive: scalar("Input Drive", settings.inputDrive),
+                displayBoost: scalar("Display Boost", settings.displayBoost),
+                hueShift: scalar("Hue Shift", settings.hueShift),
+                saturation: scalar("Saturation", settings.saturation),
+                sourceColor: scalar("Source Color", settings.sourceColor),
+                reset: scalar("Reset", settings.reset),
+                tint: tint
             ))
         case .transition:
             guard
@@ -25868,7 +26497,7 @@ final class GraphStore: ObservableObject {
             ))
         case .line:
             return .lineBatch(PreviewLineBatchPass(nodeID: sourceNode.id, instances: [linePreviewInstance(for: sourceNode)]))
-        case .scene3DTransform:
+        case .scene3DTransform, .scene3DTile:
             return nil
         case .scene3DLight:
             return nil
@@ -26079,6 +26708,8 @@ final class GraphStore: ObservableObject {
                 nodeID = UUID()
             case .transform(let transformNodeID, _, _, _, _, _, _, _, _, _, _):
                 nodeID = transformNodeID
+            case .tile(let tileNodeID, _, _, _, _, _, _, _, _, _, _):
+                nodeID = tileNodeID
             }
             return .scene3DRender(PreviewScene3DRenderPass(
                 nodeID: nodeID,
@@ -26104,6 +26735,8 @@ final class GraphStore: ObservableObject {
             return .layers(layers: layers, opacity: opacity)
         case .feedback(let pass):
             return .feedback(pass)
+        case .reactionDiffusion(let pass):
+            return .reactionDiffusion(pass)
         case .feedbackHistory:
             return .clear(PreviewClearPass(color: SIMD4<Float>(0, 0, 0, 0)))
         }
@@ -26149,6 +26782,8 @@ final class GraphStore: ObservableObject {
             return .scene3DRender(pass)
         case .feedback(let pass):
             return .feedback(pass)
+        case .reactionDiffusion(let pass):
+            return .reactionDiffusion(pass)
         case .transition(let pass):
             return .transition(pass)
         case .mix(let primary, let secondary, let amount):
@@ -26532,6 +27167,36 @@ final class GraphStore: ObservableObject {
                 rotationDegreesY: Float(rotationY),
                 rotationDegreesZ: Float(rotationZ)
             ))
+        case .scene3DTile:
+            guard
+                let sourceInput = sourceNode.inputPorts.first(where: { $0.name == "Scene" }),
+                let source = previewPassSource(forInputPortID: sourceInput.id, visitedNodeIDs: childVisitedNodeIDs, activeFeedbackNodeID: childFeedbackNodeID).flatMap(extractScene3DSource)
+            else {
+                return nil
+            }
+            let settings = settings(forScene3DTileNodeID: sourceNode.id)
+            let centerX = sourceNode.inputPorts.first(where: { $0.name == "Center X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.centerX
+            let centerY = sourceNode.inputPorts.first(where: { $0.name == "Center Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.centerY
+            let centerZ = sourceNode.inputPorts.first(where: { $0.name == "Center Z" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.centerZ
+            let spacingX = sourceNode.inputPorts.first(where: { $0.name == "Spacing X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.spacingX
+            let spacingY = sourceNode.inputPorts.first(where: { $0.name == "Spacing Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.spacingY
+            let spacingZ = sourceNode.inputPorts.first(where: { $0.name == "Spacing Z" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.spacingZ
+            let fieldX = sourceNode.inputPorts.first(where: { $0.name == "Field X" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.fieldX
+            let fieldY = sourceNode.inputPorts.first(where: { $0.name == "Field Y" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.fieldY
+            let fieldZ = sourceNode.inputPorts.first(where: { $0.name == "Field Z" }).flatMap { resolvedScalarValue(forInputPortID: $0.id) } ?? settings.fieldZ
+            return .scene3DSource(.tile(
+                nodeID: sourceNode.id,
+                source: source,
+                centerX: Float(centerX),
+                centerY: Float(centerY),
+                centerZ: Float(centerZ),
+                spacingX: Float(max(0.0, spacingX)),
+                spacingY: Float(max(0.0, spacingY)),
+                spacingZ: Float(max(0.0, spacingZ)),
+                fieldX: Float(max(0.0, fieldX)),
+                fieldY: Float(max(0.0, fieldY)),
+                fieldZ: Float(max(0.0, fieldZ))
+            ))
         case .scene3DMaterial:
             return nil
         case .scene3DPrimitive:
@@ -26663,7 +27328,7 @@ final class GraphStore: ObservableObject {
             return .videoPlayer(PreviewVideoPlayerPass(nodeID: sourceNode.id))
         case .video:
             return .video
-        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow:
+        case .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow:
             guard
                 let effect = resolvedCoreImageEffect(for: sourceNode),
                 let sourceInput = sourceNode.inputPorts.first(where: { $0.name == "Source" }),
@@ -28713,6 +29378,17 @@ final class GraphStore: ObservableObject {
                         GraphPort(id: "scene3dtransform:\(nodeID.uuidString):output", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene"))
                     ]
                 )
+            case "scene3DTile":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .scene3DTile,
+                    position: position,
+                    inputPorts: makeScene3DTileInputPorts(nodeID: nodeID),
+                    outputPorts: [
+                        GraphPort(id: "scene3dtile:\(nodeID.uuidString):output", nodeID: nodeID, name: "Scene", direction: .output, kind: .scene3DSignal("scene"))
+                    ]
+                )
             case "scene3DRender":
                 let sceneCount = scene3DRenderNodeSettings[nodeID]?.sceneCount ?? 4
                 return GraphNode(
@@ -28910,7 +29586,7 @@ final class GraphStore: ObservableObject {
                         )
                     ]
                 )
-            case "blur", "bloom", "hueRotate", "posterize", "glow":
+        case "blur", "bloom", "hueRotate", "posterize", "levels", "glow":
                 let kind: GraphNodeKind
                 let effect: CoreImageEffectKind
                 switch savedNode.kind {
@@ -28926,6 +29602,9 @@ final class GraphStore: ObservableObject {
                 case "posterize":
                     kind = .posterize
                     effect = .posterize
+                case "levels":
+                    kind = .levels
+                    effect = .levels
                 default:
                     kind = .glow
                     effect = .glow
@@ -28996,6 +29675,23 @@ final class GraphStore: ObservableObject {
                     outputPorts: [
                         GraphPort(
                             id: "feedback:\(nodeID.uuidString):output",
+                            nodeID: nodeID,
+                            name: "Shader",
+                            direction: .output,
+                            kind: .fragmentShader
+                        )
+                    ]
+                )
+            case "reactionDiffusion":
+                return GraphNode(
+                    id: nodeID,
+                    title: savedNode.title,
+                    kind: .reactionDiffusion,
+                    position: position,
+                    inputPorts: makeReactionDiffusionInputPorts(nodeID: nodeID),
+                    outputPorts: [
+                        GraphPort(
+                            id: "reactionDiffusion:\(nodeID.uuidString):output",
                             nodeID: nodeID,
                             name: "Shader",
                             direction: .output,
@@ -29913,6 +30609,9 @@ final class GraphStore: ObservableObject {
         scene3DTransformNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DTransformNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
+        scene3DTileNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DTileNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
         scene3DRenderNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.scene3DRenderNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
@@ -29968,6 +30667,9 @@ final class GraphStore: ObservableObject {
             UUID(uuidString: key).map { ($0, value) }
         })
         feedbackNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.feedbackNodeSettings.compactMap { key, value in
+            UUID(uuidString: key).map { ($0, value) }
+        })
+        reactionDiffusionNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.reactionDiffusionNodeSettings.compactMap { key, value in
             UUID(uuidString: key).map { ($0, value) }
         })
         coreImageNodeSettings = Dictionary(uniqueKeysWithValues: snapshot.coreImageNodeSettings.compactMap { key, value in
@@ -30141,6 +30843,9 @@ final class GraphStore: ObservableObject {
             }
             if case .scene3DTransform = node.kind, scene3DTransformNodeSettings[node.id] == nil {
                 scene3DTransformNodeSettings[node.id] = Scene3DTransformNodeSettings()
+            }
+            if case .scene3DTile = node.kind, scene3DTileNodeSettings[node.id] == nil {
+                scene3DTileNodeSettings[node.id] = Scene3DTileNodeSettings()
             }
             if case .scene3DRender = node.kind, scene3DRenderNodeSettings[node.id] == nil {
                 scene3DRenderNodeSettings[node.id] = Scene3DRenderNodeSettings()
@@ -30362,6 +31067,28 @@ final class GraphStore: ObservableObject {
             if case .renderWindow = node.kind, renderWindowNodeSettings[node.id] == nil {
                 renderWindowNodeSettings[node.id] = RenderWindowNodeSettings()
             }
+            if case .renderWindow = node.kind,
+               let index = document.nodes.firstIndex(where: { $0.id == node.id }),
+               document.nodes[index].inputPorts.contains(where: { $0.name == "FPS" }) == false {
+                var updatedDocument = document
+                var inputPorts = updatedDocument.nodes[index].inputPorts
+                inputPorts.append(GraphPort(
+                    id: "renderwindow:\(node.id.uuidString):fps",
+                    nodeID: node.id,
+                    name: "FPS",
+                    direction: .input,
+                    kind: .scalarSignal("fps")
+                ))
+                updatedDocument.nodes[index] = GraphNode(
+                    id: updatedDocument.nodes[index].id,
+                    title: updatedDocument.nodes[index].title,
+                    kind: updatedDocument.nodes[index].kind,
+                    position: updatedDocument.nodes[index].position,
+                    inputPorts: inputPorts,
+                    outputPorts: updatedDocument.nodes[index].outputPorts
+                )
+                document = updatedDocument
+            }
             if case .scalarMultiplexor = node.kind {
                 if scalarArrayNodeSettings[node.id] == nil {
                     scalarArrayNodeSettings[node.id] = ScalarArrayNodeSettings()
@@ -30496,6 +31223,9 @@ final class GraphStore: ObservableObject {
             if case .scene3DTransform = node.kind, scene3DTransformNodeSettings[node.id] == nil {
                 scene3DTransformNodeSettings[node.id] = Scene3DTransformNodeSettings()
             }
+            if case .scene3DTile = node.kind, scene3DTileNodeSettings[node.id] == nil {
+                scene3DTileNodeSettings[node.id] = Scene3DTileNodeSettings()
+            }
             if case .billboard = node.kind, billboardNodeSettings[node.id] == nil {
                 billboardNodeSettings[node.id] = BillboardNodeSettings()
             }
@@ -30608,6 +31338,9 @@ final class GraphStore: ObservableObject {
             }
             if case .feedback = node.kind, feedbackNodeSettings[node.id] == nil {
                 feedbackNodeSettings[node.id] = FeedbackNodeSettings()
+            }
+            if case .reactionDiffusion = node.kind, reactionDiffusionNodeSettings[node.id] == nil {
+                reactionDiffusionNodeSettings[node.id] = ReactionDiffusionNodeSettings()
             }
             if let effect = resolvedCoreImageEffect(for: node), coreImageNodeSettings[node.id] == nil {
                 coreImageNodeSettings[node.id] = defaultCoreImageSettings(for: effect)
@@ -31227,6 +31960,14 @@ final class GraphStore: ObservableObject {
         scene3DTransformNodeSettings = scene3DTransformNodeSettings.filter { liveNodeIDs.contains($0.key) }
     }
 
+    private func pruneScene3DTileNodeSettings() {
+        let liveNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .scene3DTile = node.kind { return node.id }
+            return nil
+        })
+        scene3DTileNodeSettings = scene3DTileNodeSettings.filter { liveNodeIDs.contains($0.key) }
+    }
+
     private func pruneBillboardNodeSettings() {
         let liveNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
             if case .billboard = node.kind { return node.id }
@@ -31378,6 +32119,14 @@ final class GraphStore: ObservableObject {
             return nil
         })
         feedbackNodeSettings = feedbackNodeSettings.filter { liveFeedbackNodeIDs.contains($0.key) }
+    }
+
+    private func pruneReactionDiffusionNodeSettings() {
+        let liveReactionNodeIDs = Set(document.nodes.compactMap { node -> GraphNode.ID? in
+            if case .reactionDiffusion = node.kind { return node.id }
+            return nil
+        })
+        reactionDiffusionNodeSettings = reactionDiffusionNodeSettings.filter { liveReactionNodeIDs.contains($0.key) }
     }
 
     private func pruneCoreImageNodeSettings() {
@@ -32071,6 +32820,8 @@ final class GraphStore: ObservableObject {
             return .hueRotate
         case .posterize:
             return .posterize
+        case .levels:
+            return .levels
         case .glow:
             return .glow
         default:
@@ -32095,6 +32846,8 @@ final class GraphStore: ObservableObject {
             return .hueRotate
         case .posterize:
             return .posterize
+        case .levels:
+            return .levels
         case .glow:
             return .glow
         case .edges, .pixellate, .twirl, .kaleidoscope:
@@ -32112,6 +32865,8 @@ final class GraphStore: ObservableObject {
             return CoreImageNodeSettings(effect: .hueRotate, primary: 0.5, secondary: 0.0)
         case .posterize:
             return CoreImageNodeSettings(effect: .posterize, primary: 4.0, secondary: 0.0)
+        case .levels:
+            return CoreImageNodeSettings(effect: .levels, primary: 0.0, secondary: 1.0)
         case .glow:
             return CoreImageNodeSettings(effect: .glow, primary: 10.0, secondary: 0.9)
         case .edges:
@@ -32496,6 +33251,7 @@ final class GraphStore: ObservableObject {
                     billboardNodeSettings: billboardNodeSettings,
                     lineNodeSettings: lineNodeSettings,
                     scene3DTransformNodeSettings: scene3DTransformNodeSettings,
+                    scene3DTileNodeSettings: scene3DTileNodeSettings,
                     scene3DRenderNodeSettings: scene3DRenderNodeSettings,
                     scene3DLightNodeSettings: scene3DLightNodeSettings,
                     scene3DMaterialNodeSettings: scene3DMaterialNodeSettings,
@@ -32513,6 +33269,7 @@ final class GraphStore: ObservableObject {
                     aiImageNodeSettings: aiImageNodeSettings,
                     videoPlayerNodeSettings: videoPlayerNodeSettings,
                     feedbackNodeSettings: feedbackNodeSettings,
+                    reactionDiffusionNodeSettings: reactionDiffusionNodeSettings,
                     coreImageNodeSettings: coreImageNodeSettings,
                     underwaterNodeSettings: underwaterNodeSettings,
                     layerNodeSettings: layerNodeSettings
@@ -32803,6 +33560,7 @@ final class GraphStore: ObservableObject {
         let billboardNodeSettings: [String: BillboardNodeSettings]
         let lineNodeSettings: [String: LineNodeSettings]
         let scene3DTransformNodeSettings: [String: Scene3DTransformNodeSettings]
+        let scene3DTileNodeSettings: [String: Scene3DTileNodeSettings]
         let scene3DRenderNodeSettings: [String: Scene3DRenderNodeSettings]
         let scene3DLightNodeSettings: [String: Scene3DLightNodeSettings]
         let scene3DMaterialNodeSettings: [String: Scene3DMaterialNodeSettings]
@@ -32820,6 +33578,7 @@ final class GraphStore: ObservableObject {
         let aiImageNodeSettings: [String: AIImageNodeSettings]
         let videoPlayerNodeSettings: [String: VideoPlayerNodeSettings]
         let feedbackNodeSettings: [String: FeedbackNodeSettings]
+        let reactionDiffusionNodeSettings: [String: ReactionDiffusionNodeSettings]
         let coreImageNodeSettings: [String: CoreImageNodeSettings]
         let underwaterNodeSettings: [String: UnderwaterNodeSettings]
         let layerNodeSettings: [String: LayerNodeSettings]
@@ -32911,6 +33670,7 @@ final class GraphStore: ObservableObject {
             billboardNodeSettings: [GraphNode.ID: BillboardNodeSettings],
             lineNodeSettings: [GraphNode.ID: LineNodeSettings],
             scene3DTransformNodeSettings: [GraphNode.ID: Scene3DTransformNodeSettings],
+            scene3DTileNodeSettings: [GraphNode.ID: Scene3DTileNodeSettings],
             scene3DRenderNodeSettings: [GraphNode.ID: Scene3DRenderNodeSettings],
             scene3DLightNodeSettings: [GraphNode.ID: Scene3DLightNodeSettings],
             scene3DMaterialNodeSettings: [GraphNode.ID: Scene3DMaterialNodeSettings],
@@ -32928,6 +33688,7 @@ final class GraphStore: ObservableObject {
             aiImageNodeSettings: [GraphNode.ID: AIImageNodeSettings],
             videoPlayerNodeSettings: [GraphNode.ID: VideoPlayerNodeSettings],
             feedbackNodeSettings: [GraphNode.ID: FeedbackNodeSettings],
+            reactionDiffusionNodeSettings: [GraphNode.ID: ReactionDiffusionNodeSettings],
             coreImageNodeSettings: [GraphNode.ID: CoreImageNodeSettings],
             underwaterNodeSettings: [GraphNode.ID: UnderwaterNodeSettings],
             layerNodeSettings: [GraphNode.ID: LayerNodeSettings]
@@ -33121,6 +33882,9 @@ final class GraphStore: ObservableObject {
             self.scene3DTransformNodeSettings = Dictionary(uniqueKeysWithValues: scene3DTransformNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
+            self.scene3DTileNodeSettings = Dictionary(uniqueKeysWithValues: scene3DTileNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
             self.scene3DRenderNodeSettings = Dictionary(uniqueKeysWithValues: scene3DRenderNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
@@ -33170,6 +33934,9 @@ final class GraphStore: ObservableObject {
                 (key.uuidString, value)
             })
             self.feedbackNodeSettings = Dictionary(uniqueKeysWithValues: feedbackNodeSettings.map { key, value in
+                (key.uuidString, value)
+            })
+            self.reactionDiffusionNodeSettings = Dictionary(uniqueKeysWithValues: reactionDiffusionNodeSettings.map { key, value in
                 (key.uuidString, value)
             })
             self.coreImageNodeSettings = Dictionary(uniqueKeysWithValues: coreImageNodeSettings.map { key, value in
@@ -33277,6 +34044,7 @@ final class GraphStore: ObservableObject {
             case billboardNodeSettings
             case lineNodeSettings
             case scene3DTransformNodeSettings
+            case scene3DTileNodeSettings
             case scene3DRenderNodeSettings
             case scene3DLightNodeSettings
             case scene3DMaterialNodeSettings
@@ -33294,6 +34062,7 @@ final class GraphStore: ObservableObject {
             case aiImageNodeSettings
             case videoPlayerNodeSettings
             case feedbackNodeSettings
+            case reactionDiffusionNodeSettings
             case coreImageNodeSettings
             case underwaterNodeSettings
             case layerNodeSettings
@@ -33389,6 +34158,7 @@ final class GraphStore: ObservableObject {
             billboardNodeSettings = try container.decodeIfPresent([String: BillboardNodeSettings].self, forKey: .billboardNodeSettings) ?? [:]
             lineNodeSettings = try container.decodeIfPresent([String: LineNodeSettings].self, forKey: .lineNodeSettings) ?? [:]
             scene3DTransformNodeSettings = try container.decodeIfPresent([String: Scene3DTransformNodeSettings].self, forKey: .scene3DTransformNodeSettings) ?? [:]
+            scene3DTileNodeSettings = try container.decodeIfPresent([String: Scene3DTileNodeSettings].self, forKey: .scene3DTileNodeSettings) ?? [:]
             scene3DRenderNodeSettings = try container.decodeIfPresent([String: Scene3DRenderNodeSettings].self, forKey: .scene3DRenderNodeSettings) ?? [:]
             scene3DLightNodeSettings = try container.decodeIfPresent([String: Scene3DLightNodeSettings].self, forKey: .scene3DLightNodeSettings) ?? [:]
             scene3DMaterialNodeSettings = try container.decodeIfPresent([String: Scene3DMaterialNodeSettings].self, forKey: .scene3DMaterialNodeSettings) ?? [:]
@@ -33406,6 +34176,7 @@ final class GraphStore: ObservableObject {
             aiImageNodeSettings = try container.decodeIfPresent([String: AIImageNodeSettings].self, forKey: .aiImageNodeSettings) ?? [:]
             videoPlayerNodeSettings = try container.decodeIfPresent([String: VideoPlayerNodeSettings].self, forKey: .videoPlayerNodeSettings) ?? [:]
             feedbackNodeSettings = try container.decodeIfPresent([String: FeedbackNodeSettings].self, forKey: .feedbackNodeSettings) ?? [:]
+            reactionDiffusionNodeSettings = try container.decodeIfPresent([String: ReactionDiffusionNodeSettings].self, forKey: .reactionDiffusionNodeSettings) ?? [:]
             coreImageNodeSettings = try container.decodeIfPresent([String: CoreImageNodeSettings].self, forKey: .coreImageNodeSettings) ?? [:]
             underwaterNodeSettings = try container.decodeIfPresent([String: UnderwaterNodeSettings].self, forKey: .underwaterNodeSettings) ?? [:]
             layerNodeSettings = try container.decodeIfPresent([String: LayerNodeSettings].self, forKey: .layerNodeSettings) ?? [:]
@@ -33712,6 +34483,8 @@ final class GraphStore: ObservableObject {
                 kind = "transform"
             case .scene3DTransform:
                 kind = "scene3DTransform"
+            case .scene3DTile:
+                kind = "scene3DTile"
             case .scene3DRender:
                 kind = "scene3DRender"
             case .billboard:
@@ -33766,12 +34539,16 @@ final class GraphStore: ObservableObject {
                 kind = "hueRotate"
             case .posterize:
                 kind = "posterize"
+            case .levels:
+                kind = "levels"
             case .glow:
                 kind = "glow"
             case .underwater:
                 kind = "underwater"
             case .feedback:
                 kind = "feedback"
+            case .reactionDiffusion:
+                kind = "reactionDiffusion"
             case .scale:
                 kind = "scale"
             case .interpolator:

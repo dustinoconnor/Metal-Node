@@ -19,7 +19,9 @@ import simd
 struct MetalPreviewView: NSViewRepresentable {
     let configuration: PreviewRenderConfiguration
     let isRunning: Bool
+    var preferredFramesPerSecond: Int = 60
     var videoRecorder: PreviewVideoRecorder? = nil
+    var syphonServerName: String? = nil
     var onMouseChange: ((CGPoint?) -> Void)? = nil
     var onMouseButtonChange: ((Bool, Bool) -> Void)? = nil
     var onModifierFlagsChange: ((NSEvent.ModifierFlags) -> Void)? = nil
@@ -33,7 +35,12 @@ struct MetalPreviewView: NSViewRepresentable {
     private static let maxBoolUniforms = 16
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(configuration: configuration, isRunning: isRunning, videoRecorder: videoRecorder)
+        Coordinator(
+            configuration: configuration,
+            isRunning: isRunning,
+            videoRecorder: videoRecorder,
+            syphonServerName: syphonServerName
+        )
     }
 
     func makeNSView(context: Context) -> MTKView {
@@ -42,7 +49,7 @@ struct MetalPreviewView: NSViewRepresentable {
         view.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         view.colorPixelFormat = .bgra8Unorm
         view.framebufferOnly = false
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = max(1, min(120, preferredFramesPerSecond))
         view.isPaused = false
         view.enableSetNeedsDisplay = false
         view.delegate = context.coordinator
@@ -61,7 +68,14 @@ struct MetalPreviewView: NSViewRepresentable {
             trackingView.onModifierFlagsChange = onModifierFlagsChange
             trackingView.onScrollChange = onScrollChange
         }
-        context.coordinator.update(configuration: configuration, isRunning: isRunning, videoRecorder: videoRecorder, view: nsView)
+        nsView.preferredFramesPerSecond = max(1, min(120, preferredFramesPerSecond))
+        context.coordinator.update(
+            configuration: configuration,
+            isRunning: isRunning,
+            videoRecorder: videoRecorder,
+            syphonServerName: syphonServerName,
+            view: nsView
+        )
     }
 
     final class Coordinator: NSObject, MTKViewDelegate {
@@ -118,6 +132,7 @@ struct MetalPreviewView: NSViewRepresentable {
         private var liveIsRunning: Bool
         private var frozenRenderTime: Float = 0
         private weak var liveVideoRecorder: PreviewVideoRecorder?
+        private var syphonOutputBridge: SyphonOutputBridge?
 
         private var liveConfiguration: PreviewRenderConfiguration
         private var compiledSignature = ""
@@ -129,6 +144,8 @@ struct MetalPreviewView: NSViewRepresentable {
         private var transitionPipelineState: MTLRenderPipelineState?
         private var layerCompositePipelineState: MTLRenderPipelineState?
         private var feedbackPipelineState: MTLRenderPipelineState?
+        private var reactionDiffusionPipelineState: MTLRenderPipelineState?
+        private var reactionDiffusionDisplayPipelineState: MTLRenderPipelineState?
         private var trailPipelineState: MTLRenderPipelineState?
         private var circlePipelineState: MTLRenderPipelineState?
         private var videoPipelineState: MTLRenderPipelineState?
@@ -138,6 +155,7 @@ struct MetalPreviewView: NSViewRepresentable {
         private var trailHistory: [TrailHistoryPoint] = []
         private var lastTrailAppendTime: Float = 0
         private var feedbackHistoryTextures: [UUID: MTLTexture] = [:]
+        private var reactionDiffusionStateTextures: [UUID: MTLTexture] = [:]
         private var renderTexturePool: [String: [MTLTexture]] = [:]
         private var renderTexturePoolIndices: [String: Int] = [:]
         private var frameScene3DRenderTextures: [String: MTLTexture] = [:]
@@ -145,7 +163,7 @@ struct MetalPreviewView: NSViewRepresentable {
         private var videoTextureCache: CVMetalTextureCache?
         private var sceneRenderers: [UUID: SCNRenderer] = [:]
         private var modelScenes: [UUID: SCNScene] = [:]
-        private var modelSceneAssetSignatures: [UUID: Int] = [:]
+        private var modelSceneAssetSignatures: [UUID: String] = [:]
         private var particleScenes: [UUID: SCNScene] = [:]
         private var particleSceneSignatures: [UUID: String] = [:]
         private var sceneParticleNodes: [UUID: (signature: String, node: SCNNode)] = [:]
@@ -158,12 +176,20 @@ struct MetalPreviewView: NSViewRepresentable {
         private var loggedModelLoadFailures: Set<String> = []
         private var loggedShaderCompileFailures: Set<Int> = []
 
-        init(configuration: PreviewRenderConfiguration, isRunning: Bool, videoRecorder: PreviewVideoRecorder?) {
+        init(
+            configuration: PreviewRenderConfiguration,
+            isRunning: Bool,
+            videoRecorder: PreviewVideoRecorder?,
+            syphonServerName: String?
+        ) {
             device = MTLCreateSystemDefaultDevice()
             commandQueue = device?.makeCommandQueue()
             liveConfiguration = configuration
             liveIsRunning = isRunning
             liveVideoRecorder = videoRecorder
+            if let syphonServerName {
+                syphonOutputBridge = SyphonOutputBridge(serverName: syphonServerName)
+            }
             if let device {
                 let descriptor = MTLSamplerDescriptor()
                 descriptor.minFilter = .linear
@@ -184,10 +210,25 @@ struct MetalPreviewView: NSViewRepresentable {
             startRedrawLoop()
         }
 
-        func update(configuration: PreviewRenderConfiguration, isRunning: Bool, videoRecorder: PreviewVideoRecorder?, view: MTKView) {
+        func update(
+            configuration: PreviewRenderConfiguration,
+            isRunning: Bool,
+            videoRecorder: PreviewVideoRecorder?,
+            syphonServerName: String?,
+            view: MTKView
+        ) {
             self.view = view
             liveConfiguration = configuration
             liveVideoRecorder = videoRecorder
+            if let syphonServerName {
+                if let syphonOutputBridge {
+                    syphonOutputBridge.rename(to: syphonServerName)
+                } else {
+                    syphonOutputBridge = SyphonOutputBridge(serverName: syphonServerName)
+                }
+            } else {
+                syphonOutputBridge = nil
+            }
             if liveIsRunning != isRunning {
                 if isRunning {
                     startTime = CACurrentMediaTime() - CFTimeInterval(frozenRenderTime)
@@ -418,6 +459,14 @@ struct MetalPreviewView: NSViewRepresentable {
                     drawableSize: view.drawableSize,
                     currentTime: currentRenderTime()
                 )
+            case .reactionDiffusion(let pass):
+                encodeReactionDiffusionPass(
+                    pass,
+                    into: renderPassDescriptor,
+                    commandBuffer: commandBuffer,
+                    drawableSize: view.drawableSize,
+                    currentTime: currentRenderTime()
+                )
             case .layers(let layers, let opacity):
                 guard let displayPipelineState = videoPipelineState else {
                     return
@@ -475,11 +524,50 @@ struct MetalPreviewView: NSViewRepresentable {
                 )
             }
 
+            syphonOutputBridge?.publish(texture: drawable.texture, commandBuffer: commandBuffer)
             commandBuffer.present(drawable)
-            if let liveVideoRecorder {
-                liveVideoRecorder.capture(texture: drawable.texture, displaySize: view.bounds.size)
+            if let liveVideoRecorder,
+               let presentationTime = liveVideoRecorder.reserveVideoFramePresentationTime() {
+                captureDrawableForMovieExport(
+                    drawable.texture,
+                    displaySize: view.bounds.size,
+                    commandBuffer: commandBuffer,
+                    recorder: liveVideoRecorder,
+                    presentationTime: presentationTime
+                )
             }
             commandBuffer.commit()
+        }
+
+        private func captureDrawableForMovieExport(
+            _ drawableTexture: MTLTexture,
+            displaySize: CGSize,
+            commandBuffer: MTLCommandBuffer,
+            recorder: PreviewVideoRecorder,
+            presentationTime: TimeInterval
+        ) {
+            guard let frameTexture = makeMovieExportTexture(width: drawableTexture.width, height: drawableTexture.height) else {
+                return
+            }
+
+            if let blitEncoder = commandBuffer.makeBlitCommandEncoder() {
+                blitEncoder.copy(
+                    from: drawableTexture,
+                    sourceSlice: 0,
+                    sourceLevel: 0,
+                    sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                    sourceSize: MTLSize(width: drawableTexture.width, height: drawableTexture.height, depth: 1),
+                    to: frameTexture,
+                    destinationSlice: 0,
+                    destinationLevel: 0,
+                    destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+                )
+                blitEncoder.endEncoding()
+            }
+
+            commandBuffer.addCompletedHandler { [weak recorder] _ in
+                recorder?.capture(texture: frameTexture, displaySize: displaySize, presentationTime: presentationTime)
+            }
         }
 
         private func encodeShaderPass(
@@ -1022,6 +1110,14 @@ struct MetalPreviewView: NSViewRepresentable {
                     drawableSize: drawableSize,
                     currentTime: currentTime
                 )
+            case .reactionDiffusion(let pass):
+                encodeReactionDiffusionPass(
+                    pass,
+                    into: descriptor,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    currentTime: currentTime
+                )
             case .feedbackHistory(let nodeID):
                 guard let displayPipelineState = videoPipelineState else { return }
                 let historyTexture = feedbackHistoryTexture(
@@ -1121,6 +1217,104 @@ struct MetalPreviewView: NSViewRepresentable {
 
             encodeTextureDisplayPass(
                 texture: outputTexture,
+                with: displayPipelineState,
+                into: descriptor,
+                commandBuffer: commandBuffer
+            )
+        }
+
+        private func encodeReactionDiffusionPass(
+            _ pass: PreviewReactionDiffusionPass,
+            into descriptor: MTLRenderPassDescriptor,
+            commandBuffer: MTLCommandBuffer,
+            drawableSize: CGSize,
+            currentTime: Float
+        ) {
+            let simulationSize = reactionDiffusionSimulationSize(for: drawableSize)
+            guard
+                let reactionDiffusionPipelineState,
+                let reactionDiffusionDisplayPipelineState,
+                let displayPipelineState = videoPipelineState,
+                let previousState = reactionDiffusionStateTexture(for: pass.nodeID, drawableSize: simulationSize, commandBuffer: commandBuffer),
+                let nextState = makeRenderTexture(for: simulationSize),
+                let sourceTexture = makeRenderTexture(for: simulationSize),
+                let displayTexture = makeRenderTexture(for: drawableSize)
+            else {
+                return
+            }
+
+            if let source = pass.source {
+                renderPassSource(
+                    source,
+                    into: sourceTexture,
+                    commandBuffer: commandBuffer,
+                    drawableSize: simulationSize,
+                    currentTime: currentTime,
+                    role: .primary
+                )
+            } else {
+                clearRenderTexture(sourceTexture, color: SIMD4<Float>(0, 0, 0, 1), commandBuffer: commandBuffer)
+            }
+
+            guard
+                let stateDescriptor = offscreenRenderPassDescriptor(for: nextState),
+                let stateEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: stateDescriptor)
+            else {
+                return
+            }
+
+            var uniforms = ReactionDiffusionUniformsGPU(
+                resolution: SIMD2(Float(max(simulationSize.width, 1)), Float(max(simulationSize.height, 1))),
+                time: currentTime,
+                feed: pass.feed,
+                kill: pass.kill,
+                diffusionA: pass.diffusionA,
+                diffusionB: pass.diffusionB,
+                speed: pass.speed,
+                seed: pass.seed,
+                inputDrive: pass.inputDrive,
+                displayBoost: pass.displayBoost,
+                hueShift: pass.hueShift,
+                saturation: pass.saturation,
+                sourceColor: pass.sourceColor,
+                reset: pass.reset,
+                tint: pass.tint
+            )
+
+            let displayStateTexture: MTLTexture
+            if liveIsRunning {
+                stateEncoder.setRenderPipelineState(reactionDiffusionPipelineState)
+                stateEncoder.setFragmentTexture(previousState, index: 0)
+                stateEncoder.setFragmentTexture(sourceTexture, index: 1)
+                stateEncoder.setFragmentSamplerState(samplerState, index: 0)
+                stateEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<ReactionDiffusionUniformsGPU>.stride, index: 0)
+                stateEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+                stateEncoder.endEncoding()
+
+                reactionDiffusionStateTextures[pass.nodeID] = nextState
+                displayStateTexture = nextState
+            } else {
+                stateEncoder.endEncoding()
+                displayStateTexture = previousState
+            }
+
+            guard
+                let displayDescriptor = offscreenRenderPassDescriptor(for: displayTexture),
+                let displayEncoder = commandBuffer.makeRenderCommandEncoder(descriptor: displayDescriptor)
+            else {
+                return
+            }
+
+            displayEncoder.setRenderPipelineState(reactionDiffusionDisplayPipelineState)
+            displayEncoder.setFragmentTexture(displayStateTexture, index: 0)
+            displayEncoder.setFragmentTexture(sourceTexture, index: 1)
+            displayEncoder.setFragmentSamplerState(samplerState, index: 0)
+            displayEncoder.setFragmentBytes(&uniforms, length: MemoryLayout<ReactionDiffusionUniformsGPU>.stride, index: 0)
+            displayEncoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            displayEncoder.endEncoding()
+
+            encodeTextureDisplayPass(
+                texture: displayTexture,
                 with: displayPipelineState,
                 into: descriptor,
                 commandBuffer: commandBuffer
@@ -1820,6 +2014,26 @@ struct MetalPreviewView: NSViewRepresentable {
                         settings: settings
                     )
                 }
+            case .tile(_, let child, let centerX, let centerY, let centerZ, let spacingX, let spacingY, let spacingZ, let fieldX, let fieldY, let fieldZ):
+                let offsets = tileOffsets(
+                    center: SIMD3<Float>(centerX, centerY, centerZ),
+                    spacing: SIMD3<Float>(spacingX, spacingY, spacingZ),
+                    field: SIMD3<Float>(fieldX, fieldY, fieldZ)
+                )
+                for offset in offsets {
+                    let startIndex = passes.count
+                    appendGaussianSplatPasses(from: child, renderPass: renderPass, into: &passes)
+                    for index in startIndex..<passes.count {
+                        var settings = passes[index].settings
+                        settings.positionX += Double(offset.x)
+                        settings.positionY += Double(offset.y)
+                        settings.positionZ += Double(offset.z)
+                        passes[index] = PreviewScene3DGaussianSplatPass(
+                            nodeID: passes[index].nodeID,
+                            settings: settings
+                        )
+                    }
+                }
             case .primitive, .text, .model, .particle, .light:
                 break
             }
@@ -1874,6 +2088,8 @@ struct MetalPreviewView: NSViewRepresentable {
             transitionPipelineState = nil
             layerCompositePipelineState = nil
             feedbackPipelineState = nil
+            reactionDiffusionPipelineState = nil
+            reactionDiffusionDisplayPipelineState = nil
             trailPipelineState = nil
             circlePipelineState = nil
             videoPipelineState = nil
@@ -1922,6 +2138,14 @@ struct MetalPreviewView: NSViewRepresentable {
             case .feedback(let pass):
                 compilePipeline(for: pass.source, role: .primary, view: view, device: device)
                 feedbackPipelineState = compileFeedbackPipeline(for: view, device: device)
+                videoPipelineState = compileVideoPipeline(for: view, device: device)
+            case .reactionDiffusion(let pass):
+                if let source = pass.source {
+                    compilePipeline(for: source, role: .primary, view: view, device: device)
+                }
+                let pipelines = compileReactionDiffusionPipelines(for: view, device: device)
+                reactionDiffusionPipelineState = pipelines.simulation
+                reactionDiffusionDisplayPipelineState = pipelines.display
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
             case .mix(let primary, let secondary, _):
                 compilePipeline(for: primary, role: .primary, view: view, device: device)
@@ -2176,6 +2400,8 @@ struct MetalPreviewView: NSViewRepresentable {
                 break
             case .transform(_, let child, _, _, _, _, _, _, _, _, _):
                 compileScene3DSourcePipeline(child, view: view, device: device)
+            case .tile(_, let child, _, _, _, _, _, _, _, _, _):
+                compileScene3DSourcePipeline(child, view: view, device: device)
             }
         }
 
@@ -2253,6 +2479,14 @@ struct MetalPreviewView: NSViewRepresentable {
                 compilePipeline(for: pass.source, role: .primary, view: view, device: device)
                 feedbackPipelineState = compileFeedbackPipeline(for: view, device: device)
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
+            case .reactionDiffusion(let pass):
+                if let source = pass.source {
+                    compilePipeline(for: source, role: .primary, view: view, device: device)
+                }
+                let pipelines = compileReactionDiffusionPipelines(for: view, device: device)
+                reactionDiffusionPipelineState = pipelines.simulation
+                reactionDiffusionDisplayPipelineState = pipelines.display
+                videoPipelineState = compileVideoPipeline(for: view, device: device)
             case .feedbackHistory:
                 videoPipelineState = compileVideoPipeline(for: view, device: device)
             case .trail:
@@ -2301,6 +2535,36 @@ struct MetalPreviewView: NSViewRepresentable {
                 return try device.makeRenderPipelineState(descriptor: descriptor)
             } catch {
                 return nil
+            }
+        }
+
+        private func compileReactionDiffusionPipelines(for view: MTKView, device: MTLDevice) -> (simulation: MTLRenderPipelineState?, display: MTLRenderPipelineState?) {
+            do {
+                let library = try device.makeLibrary(source: Self.reactionDiffusionShaderSource, options: nil)
+                guard
+                    let vertexFunction = library.makeFunction(name: "reactionVertex"),
+                    let simulationFunction = library.makeFunction(name: "reactionSimulationFragment"),
+                    let displayFunction = library.makeFunction(name: "reactionDisplayFragment")
+                else {
+                    return (nil, nil)
+                }
+
+                let simulationDescriptor = MTLRenderPipelineDescriptor()
+                simulationDescriptor.vertexFunction = vertexFunction
+                simulationDescriptor.fragmentFunction = simulationFunction
+                simulationDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+
+                let displayDescriptor = MTLRenderPipelineDescriptor()
+                displayDescriptor.vertexFunction = vertexFunction
+                displayDescriptor.fragmentFunction = displayFunction
+                displayDescriptor.colorAttachments[0].pixelFormat = view.colorPixelFormat
+
+                return (
+                    try device.makeRenderPipelineState(descriptor: simulationDescriptor),
+                    try device.makeRenderPipelineState(descriptor: displayDescriptor)
+                )
+            } catch {
+                return (nil, nil)
             }
         }
 
@@ -2450,6 +2714,19 @@ struct MetalPreviewView: NSViewRepresentable {
             return texture
         }
 
+        private func makeMovieExportTexture(width: Int, height: Int) -> MTLTexture? {
+            guard let device else { return nil }
+            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+                pixelFormat: .bgra8Unorm,
+                width: max(width, 1),
+                height: max(height, 1),
+                mipmapped: false
+            )
+            descriptor.usage = [.shaderRead]
+            descriptor.storageMode = .private
+            return device.makeTexture(descriptor: descriptor)
+        }
+
         private func feedbackHistoryTexture(
             for nodeID: UUID,
             drawableSize: CGSize,
@@ -2465,6 +2742,35 @@ struct MetalPreviewView: NSViewRepresentable {
             clearRenderTexture(texture, color: SIMD4<Float>(0, 0, 0, 0), commandBuffer: commandBuffer)
             feedbackHistoryTextures[nodeID] = texture
             return texture
+        }
+
+        private func reactionDiffusionStateTexture(
+            for nodeID: UUID,
+            drawableSize: CGSize,
+            commandBuffer: MTLCommandBuffer
+        ) -> MTLTexture? {
+            if let existing = reactionDiffusionStateTextures[nodeID],
+               existing.width == Int(drawableSize.width),
+               existing.height == Int(drawableSize.height) {
+                return existing
+            }
+            guard let texture = makeRenderTexture(for: drawableSize) else {
+                return nil
+            }
+            clearRenderTexture(texture, color: SIMD4<Float>(1, 0, 0, 1), commandBuffer: commandBuffer)
+            reactionDiffusionStateTextures[nodeID] = texture
+            return texture
+        }
+
+        private func reactionDiffusionSimulationSize(for drawableSize: CGSize) -> CGSize {
+            let maxDimension: CGFloat = 256
+            let width = max(drawableSize.width, 1)
+            let height = max(drawableSize.height, 1)
+            let scale = min(1, maxDimension / max(width, height))
+            return CGSize(
+                width: max(1, round(width * scale)),
+                height: max(1, round(height * scale))
+            )
         }
 
         private func makeFallbackTexture() -> MTLTexture {
@@ -2618,7 +2924,7 @@ struct MetalPreviewView: NSViewRepresentable {
             for pass: PreviewScene3DModelPass,
             materialTextures: Scene3DMaterialTextures?
         ) -> SCNScene {
-            let assetSignature = pass.settings.bookmarkData.hashValue
+            let assetSignature = "\(pass.settings.bookmarkData.hashValue):\(projectionSignature(for: pass.material))"
             let needsRebuild = modelScenes[pass.nodeID] == nil || modelSceneAssetSignatures[pass.nodeID] != assetSignature
 
             if needsRebuild {
@@ -2890,8 +3196,9 @@ struct MetalPreviewView: NSViewRepresentable {
                 Float(settings.scale)
             )
 
+            let parentURL = resolveSecurityScopedURL(from: settings.parentFolderBookmarkData)
             if let url = resolveSecurityScopedURL(from: settings.bookmarkData),
-               let loadedModel = loadModelScene(from: url) {
+               let loadedModel = loadModelScene(from: url, parentURL: parentURL) {
                 let loadedScene = loadedModel.scene
                 let fittedNode = normalizedModelNode(from: loadedScene.rootNode)
                 fittedNode.name = "modelContent"
@@ -3141,9 +3448,55 @@ struct MetalPreviewView: NSViewRepresentable {
                 return true
             case .transform(_, let child, _, _, _, _, _, _, _, _, _):
                 return sourceContainsLight(child)
-            case .primitive, .text, .model, .gaussianSplat, .particle:
+            case .tile(_, let child, _, _, _, _, _, _, _, _, _):
+                return sourceContainsLight(child)
+            case .primitive(let pass):
+                return pass.light != nil
+            case .text(let pass):
+                return pass.light != nil
+            case .model(let pass):
+                return pass.light != nil
+            case .gaussianSplat, .particle:
                 return false
             }
+        }
+
+        private func tileOffsets(center: SIMD3<Float>, spacing: SIMD3<Float>, field: SIMD3<Float>) -> [SIMD3<Float>] {
+            let xOffsets = tileAxisOffsets(center: center.x, spacing: spacing.x, field: field.x)
+            let yOffsets = tileAxisOffsets(center: center.y, spacing: spacing.y, field: field.y)
+            let zOffsets = tileAxisOffsets(center: center.z, spacing: spacing.z, field: field.z)
+
+            var offsets: [SIMD3<Float>] = []
+            offsets.reserveCapacity(xOffsets.count * yOffsets.count * zOffsets.count)
+            for x in xOffsets {
+                for y in yOffsets {
+                    for z in zOffsets {
+                        offsets.append(SIMD3<Float>(x, y, z))
+                    }
+                }
+            }
+            return offsets
+        }
+
+        private func tileAxisOffsets(center: Float, spacing: Float, field: Float) -> [Float] {
+            guard spacing > 0.0001, field > 0.0001 else {
+                return [0.0]
+            }
+
+            let clampedCount = min(17, max(1, Int(ceil(Double(field / spacing))) + 3))
+            let halfCount = clampedCount / 2
+            let centerRemainder = positiveModulo(center, spacing)
+            return (-halfCount...halfCount).map { index in
+                Float(index) * spacing - centerRemainder
+            }
+        }
+
+        private func positiveModulo(_ value: Float, _ divisor: Float) -> Float {
+            guard abs(divisor) > 0.0001 else {
+                return 0.0
+            }
+            let remainder = value.truncatingRemainder(dividingBy: divisor)
+            return remainder >= 0.0 ? remainder : remainder + abs(divisor)
         }
 
         private func sceneNode(
@@ -3182,7 +3535,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     Float(pass.settings.rotationY * (.pi / 180.0)),
                     Float(pass.settings.rotationZ * (.pi / 180.0))
                 )
-                return node
+                return nodeWithAttachedLight(node, light: pass.light)
             case .text(let pass):
                 let materialTextures = scene3DMaterialTextures(
                     from: pass.materialMaps,
@@ -3210,7 +3563,7 @@ struct MetalPreviewView: NSViewRepresentable {
                     Float(pass.settings.rotationY * (.pi / 180.0)),
                     Float(pass.settings.rotationZ * (.pi / 180.0))
                 )
-                return node
+                return nodeWithAttachedLight(node, light: pass.light)
             case .model(let pass):
                 let materialTextures = scene3DMaterialTextures(
                     from: pass.materialMaps,
@@ -3221,7 +3574,7 @@ struct MetalPreviewView: NSViewRepresentable {
                 let modelScene = scene3DModel(for: pass, materialTextures: materialTextures)
                 if let node = modelScene.rootNode.childNode(withName: "modelTransform", recursively: false)?.clone() {
                     applyAnimations(to: node, settings: pass.settings)
-                    return node
+                    return nodeWithAttachedLight(node, light: pass.light)
                 }
                 return nil
             case .particle(let pass):
@@ -3264,6 +3617,40 @@ struct MetalPreviewView: NSViewRepresentable {
                     rotationDegreesZ * (.pi / 180.0)
                 )
                 wrapper.addChildNode(childNode)
+                return wrapper
+            case .tile(
+                _,
+                let childSource,
+                let centerX,
+                let centerY,
+                let centerZ,
+                let spacingX,
+                let spacingY,
+                let spacingZ,
+                let fieldX,
+                let fieldY,
+                let fieldZ
+            ):
+                guard let childNode = sceneNode(
+                    from: childSource,
+                    commandBuffer: commandBuffer,
+                    drawableSize: drawableSize,
+                    currentTime: currentTime
+                ) else {
+                    return nil
+                }
+                let wrapper = SCNNode()
+                let offsets = tileOffsets(
+                    center: SIMD3<Float>(centerX, centerY, centerZ),
+                    spacing: SIMD3<Float>(spacingX, spacingY, spacingZ),
+                    field: SIMD3<Float>(fieldX, fieldY, fieldZ)
+                )
+                for offset in offsets {
+                    let tileNode = SCNNode()
+                    tileNode.position = SCNVector3(offset.x, offset.y, offset.z)
+                    tileNode.addChildNode(childNode.clone())
+                    wrapper.addChildNode(tileNode)
+                }
                 return wrapper
             }
         }
@@ -3308,6 +3695,18 @@ struct MetalPreviewView: NSViewRepresentable {
                 Float(settings.rotationZ * (.pi / 180.0))
             )
             return lightNode
+        }
+
+        private func nodeWithAttachedLight(_ node: SCNNode, light: PreviewScene3DLight?) -> SCNNode {
+            guard let lightNode = sceneLightNode(from: light) else {
+                return node
+            }
+
+            let wrapper = SCNNode()
+            wrapper.addChildNode(node)
+            lightNode.name = "customSceneLight"
+            wrapper.addChildNode(lightNode)
+            return wrapper
         }
 
         private func particleNode(for settings: Scene3DParticleNodeSettings, spriteImage: Any?) -> SCNNode {
@@ -4323,7 +4722,7 @@ struct MetalPreviewView: NSViewRepresentable {
 
                 if let modelContentNode = modelTransformNode.childNode(withName: "modelContent", recursively: false),
                    let material = pass.material {
-                    applyMaterialSettings(material, textures: materialTextures, to: modelContentNode)
+                    applyMaterialSettings(material, textures: materialTextures, to: modelContentNode, applyProjection: false)
                 }
 
                 if let modelContentNode = modelTransformNode.childNode(withName: "modelContent", recursively: false) {
@@ -4332,13 +4731,23 @@ struct MetalPreviewView: NSViewRepresentable {
             }
         }
 
-        private func loadModelScene(from url: URL) -> LoadedModelScene? {
+        private func loadModelScene(from url: URL, parentURL: URL?) -> LoadedModelScene? {
+            let assetDirectories = modelAssetDirectories(for: url, parentURL: parentURL)
             let options: [SCNSceneSource.LoadingOption: Any] = [
                 .checkConsistency: false,
                 .createNormalsIfAbsent: true,
                 .animationImportPolicy: SCNSceneSource.AnimationImportPolicy.playRepeatedly,
-                .assetDirectoryURLs: [url.deletingLastPathComponent()]
+                .assetDirectoryURLs: assetDirectories
             ]
+
+            var sceneSourceError: Error?
+            do {
+                if let source = SCNSceneSource(url: url, options: options) {
+                    return try LoadedModelScene(scene: source.scene(options: options), source: source)
+                }
+            } catch {
+                sceneSourceError = error
+            }
 
             do {
                 let modelData = try Data(contentsOf: url)
@@ -4346,18 +4755,32 @@ struct MetalPreviewView: NSViewRepresentable {
                     return try LoadedModelScene(scene: source.scene(options: options), source: source)
                 }
             } catch {
-                print("3D Model data load failed for \(url.lastPathComponent): \(error.localizedDescription)")
-            }
-
-            do {
-                if let source = SCNSceneSource(url: url, options: options) {
-                    return try LoadedModelScene(scene: source.scene(options: options), source: source)
-                }
-            } catch {
-                print("3D Model SceneKit load failed for \(url.lastPathComponent): \(error.localizedDescription)")
+                let sourceMessage = sceneSourceError.map { " SceneKit URL load: \($0.localizedDescription)." } ?? ""
+                print("3D Model data load failed for \(url.lastPathComponent):\(sourceMessage) Data load: \(error.localizedDescription)")
             }
 
             return nil
+        }
+
+        private func modelAssetDirectories(for url: URL, parentURL: URL?) -> [URL] {
+            let fileManager = FileManager.default
+            let parent = parentURL ?? url.deletingLastPathComponent()
+            let baseName = url.deletingPathExtension().lastPathComponent
+            let candidates = [
+                parent,
+                parent.appendingPathComponent("\(baseName)-files", isDirectory: true),
+                parent.appendingPathComponent("\(url.lastPathComponent)-files", isDirectory: true),
+                parent.appendingPathComponent("textures", isDirectory: true),
+                parent.appendingPathComponent("Textures", isDirectory: true),
+                parent.appendingPathComponent("images", isDirectory: true),
+                parent.appendingPathComponent("Images", isDirectory: true)
+            ]
+
+            var seen = Set<String>()
+            return candidates.filter { candidate in
+                guard fileManager.fileExists(atPath: candidate.path) else { return false }
+                return seen.insert(candidate.standardizedFileURL.path).inserted
+            }
         }
 
         private func applyAnimations(
@@ -4508,6 +4931,7 @@ struct MetalPreviewView: NSViewRepresentable {
             )
             material.isDoubleSided = settings.doubleSided
             material.lightingModel = .physicallyBased
+            material.fillMode = settings.wireframe ? .lines : .fill
 
             if let diffuse = textures?.diffuse {
                 material.diffuse.contents = diffuse
@@ -4525,23 +4949,158 @@ struct MetalPreviewView: NSViewRepresentable {
             }
             if let displacement = textures?.displacement {
                 material.displacement.contents = displacement
-                material.displacement.intensity = 0.15
+                material.displacement.intensity = CGFloat(settings.displacementScale)
+            }
+            configureTextureSampling(for: material)
+
+            if settings.wireframe {
+                let glow = max(settings.emission, 0.75)
+                material.lightingModel = .constant
+                material.diffuse.contents = NSColor(
+                    red: settings.red,
+                    green: settings.green,
+                    blue: settings.blue,
+                    alpha: settings.alpha
+                )
+                material.emission.contents = NSColor(
+                    red: min(settings.red * glow, 1.0),
+                    green: min(settings.green * glow, 1.0),
+                    blue: min(settings.blue * glow, 1.0),
+                    alpha: 1.0
+                )
+                material.blendMode = settings.alpha < 1.0 ? .alpha : .replace
+            }
+        }
+
+        private func configureTextureSampling(for material: SCNMaterial) {
+            let properties = [
+                material.diffuse,
+                material.specular,
+                material.metalness,
+                material.roughness,
+                material.normal,
+                material.displacement
+            ]
+
+            for property in properties {
+                property.wrapS = .repeat
+                property.wrapT = .repeat
+                property.minificationFilter = .linear
+                property.magnificationFilter = .linear
+                property.mipFilter = .linear
             }
         }
 
         private func applyMaterialSettings(
             _ settings: Scene3DMaterialNodeSettings,
             textures: Scene3DMaterialTextures? = nil,
-            to rootNode: SCNNode
+            to rootNode: SCNNode,
+            applyProjection: Bool = true
         ) {
             rootNode.enumerateChildNodes { node, _ in
                 guard let geometry = node.geometry else { return }
-                let baseMaterials = geometry.materials.isEmpty ? [SCNMaterial()] : geometry.materials
-                geometry.materials = baseMaterials.map { existing in
+                let targetGeometry = applyProjection ? projectedGeometryIfNeeded(geometry, settings: settings) : geometry
+                let baseMaterials = targetGeometry.materials.isEmpty ? [SCNMaterial()] : targetGeometry.materials
+                targetGeometry.materials = baseMaterials.map { existing in
                     let material = (existing.copy() as? SCNMaterial) ?? existing
                     applyMaterialSettings(settings, textures: textures, to: material)
                     return material
                 }
+                if targetGeometry !== geometry {
+                    node.geometry = targetGeometry
+                }
+            }
+        }
+
+        private func projectedGeometryIfNeeded(_ geometry: SCNGeometry, settings: Scene3DMaterialNodeSettings) -> SCNGeometry {
+            guard settings.textureProjection != .uv,
+                  let vertexSource = geometry.sources(for: .vertex).first,
+                  let vertices = vector3Array(from: vertexSource),
+                  vertices.isEmpty == false
+            else {
+                return geometry
+            }
+
+            let normals = geometry.sources(for: .normal).first.flatMap { vector3Array(from: $0) }
+            let bounds = vertices.reduce(
+                into: (min: SIMD3<Float>(repeating: .greatestFiniteMagnitude), max: SIMD3<Float>(repeating: -.greatestFiniteMagnitude))
+            ) { partialResult, vertex in
+                partialResult.min = simd.min(partialResult.min, vertex)
+                partialResult.max = simd.max(partialResult.max, vertex)
+            }
+
+            let scale = Float(max(settings.textureScale, 0.001))
+            let offset = SIMD2<Float>(Float(settings.textureOffsetX), Float(settings.textureOffsetY))
+            let texcoords = vertices.enumerated().map { index, vertex -> CGPoint in
+                let local = vertex - bounds.min
+                let normal = normals?.indices.contains(index) == true ? normals![index] : SIMD3<Float>(0, 1, 0)
+                let uv = projectedUV(for: local, normal: normal, projection: settings.textureProjection) * scale + offset
+                return CGPoint(x: CGFloat(uv.x), y: CGFloat(uv.y))
+            }
+
+            var sources = geometry.sources.filter { $0.semantic != .texcoord }
+            sources.append(SCNGeometrySource(textureCoordinates: texcoords))
+            let projected = SCNGeometry(sources: sources, elements: geometry.elements)
+            projected.name = geometry.name
+            projected.materials = geometry.materials
+            projected.subdivisionLevel = geometry.subdivisionLevel
+            projected.edgeCreasesElement = geometry.edgeCreasesElement
+            projected.edgeCreasesSource = geometry.edgeCreasesSource
+            return projected
+        }
+
+        private func projectedUV(
+            for position: SIMD3<Float>,
+            normal: SIMD3<Float>,
+            projection: Scene3DTextureProjection
+        ) -> SIMD2<Float> {
+            switch projection {
+            case .uv:
+                return SIMD2<Float>(0, 0)
+            case .planarX:
+                return SIMD2<Float>(position.z, position.y)
+            case .planarY:
+                return SIMD2<Float>(position.x, position.z)
+            case .planarZ:
+                return SIMD2<Float>(position.x, position.y)
+            case .box:
+                let absNormal = simd_abs(normal)
+                if absNormal.x >= absNormal.y && absNormal.x >= absNormal.z {
+                    return SIMD2<Float>(position.z, position.y)
+                }
+                if absNormal.y >= absNormal.x && absNormal.y >= absNormal.z {
+                    return SIMD2<Float>(position.x, position.z)
+                }
+                return SIMD2<Float>(position.x, position.y)
+            }
+        }
+
+        private func vector3Array(from source: SCNGeometrySource) -> [SIMD3<Float>]? {
+            guard source.componentsPerVector >= 3,
+                  source.bytesPerComponent == MemoryLayout<Float>.size
+            else {
+                return nil
+            }
+
+            let stride = source.dataStride
+            let offset = source.dataOffset
+            let count = source.vectorCount
+            return source.data.withUnsafeBytes { rawBuffer in
+                var values: [SIMD3<Float>] = []
+                values.reserveCapacity(count)
+
+                for index in 0..<count {
+                    let baseOffset = offset + index * stride
+                    guard baseOffset + (MemoryLayout<Float>.size * 3) <= rawBuffer.count else {
+                        return nil
+                    }
+                    let x = rawBuffer.loadUnaligned(fromByteOffset: baseOffset, as: Float.self)
+                    let y = rawBuffer.loadUnaligned(fromByteOffset: baseOffset + MemoryLayout<Float>.size, as: Float.self)
+                    let z = rawBuffer.loadUnaligned(fromByteOffset: baseOffset + MemoryLayout<Float>.size * 2, as: Float.self)
+                    values.append(SIMD3<Float>(x, y, z))
+                }
+
+                return values
             }
         }
 
@@ -4566,12 +5125,64 @@ struct MetalPreviewView: NSViewRepresentable {
                 geometry = SCNTorus(ringRadius: 0.82, pipeRadius: 0.24)
             case .plane:
                 geometry = SCNPlane(width: 1.8, height: 1.8)
+            case .terrain:
+                geometry = terrainGeometry(for: settings)
             }
 
             let material = SCNMaterial()
             applyMaterialSettings(materialSettings, textures: materialTextures, to: material)
-            geometry.materials = [material]
-            return geometry
+            let targetGeometry = projectedGeometryIfNeeded(geometry, settings: materialSettings)
+            targetGeometry.materials = [material]
+            return targetGeometry
+        }
+
+        private func terrainGeometry(for settings: Scene3DPrimitiveNodeSettings) -> SCNGeometry {
+            let segmentCount = max(2, min(256, Int(settings.terrainSegments.rounded())))
+            let width = Float(max(settings.terrainWidth, 0.5))
+            let depth = Float(max(settings.terrainDepth, 0.5))
+            let vertexCountPerSide = segmentCount + 1
+
+            var vertices: [SCNVector3] = []
+            var normals: [SCNVector3] = []
+            var texcoords: [CGPoint] = []
+            vertices.reserveCapacity(vertexCountPerSide * vertexCountPerSide)
+            normals.reserveCapacity(vertexCountPerSide * vertexCountPerSide)
+            texcoords.reserveCapacity(vertexCountPerSide * vertexCountPerSide)
+
+            for zIndex in 0...segmentCount {
+                let v = Float(zIndex) / Float(segmentCount)
+                let z = (v - 0.5) * depth
+                for xIndex in 0...segmentCount {
+                    let u = Float(xIndex) / Float(segmentCount)
+                    let x = (u - 0.5) * width
+                    vertices.append(SCNVector3(x, 0, z))
+                    normals.append(SCNVector3(0, 1, 0))
+                    texcoords.append(CGPoint(x: CGFloat(u), y: CGFloat(v)))
+                }
+            }
+
+            var indices: [Int32] = []
+            indices.reserveCapacity(segmentCount * segmentCount * 6)
+            for zIndex in 0..<segmentCount {
+                for xIndex in 0..<segmentCount {
+                    let topLeft = Int32(zIndex * vertexCountPerSide + xIndex)
+                    let topRight = topLeft + 1
+                    let bottomLeft = Int32((zIndex + 1) * vertexCountPerSide + xIndex)
+                    let bottomRight = bottomLeft + 1
+                    indices.append(contentsOf: [topLeft, bottomLeft, topRight, topRight, bottomLeft, bottomRight])
+                }
+            }
+
+            return SCNGeometry(
+                sources: [
+                    SCNGeometrySource(vertices: vertices),
+                    SCNGeometrySource(normals: normals),
+                    SCNGeometrySource(textureCoordinates: texcoords)
+                ],
+                elements: [
+                    SCNGeometryElement(indices: indices, primitiveType: .triangles)
+                ]
+            )
         }
 
         private func geometry(
@@ -4590,8 +5201,9 @@ struct MetalPreviewView: NSViewRepresentable {
 
             let material = SCNMaterial()
             applyMaterialSettings(materialSettings, textures: materialTextures, to: material)
-            text.materials = [material]
-            return text
+            let targetGeometry = projectedGeometryIfNeeded(text, settings: materialSettings)
+            targetGeometry.materials = [material]
+            return targetGeometry
         }
 
         private func encodeCoreImageEffectPass(
@@ -4745,6 +5357,8 @@ struct MetalPreviewView: NSViewRepresentable {
                 return "underwater:\(pass.nodeID.uuidString):\(signature(for: pass.source))"
             case .feedback(let pass):
                 return "feedback:\(pass.nodeID.uuidString):\(signature(for: pass.source))"
+            case .reactionDiffusion(let pass):
+                return "reactiondiffusion:\(pass.nodeID.uuidString):\(pass.source.map(signature(for:)) ?? "nil"):\(pass.feed):\(pass.kill):\(pass.diffusionA):\(pass.diffusionB):\(pass.speed):\(pass.seed):\(pass.inputDrive):\(pass.displayBoost):\(pass.hueShift):\(pass.saturation):\(pass.sourceColor):\(pass.reset)"
             case .mix(let primary, let secondary, _):
                 return "mix:\(signature(for: primary)):\(signature(for: secondary))"
             case .transform(let pass):
@@ -4752,11 +5366,11 @@ struct MetalPreviewView: NSViewRepresentable {
             case .lineBatch(let pass):
                 return "lineBatch:\(pass.nodeID.uuidString):\(pass.instances.count)"
             case .scene3DPrimitive(let pass):
-                return "scene3d:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "scene3d:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.terrainWidth):\(pass.settings.terrainDepth):\(pass.settings.terrainSegments):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DText(let pass):
-                return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DModel(let pass):
-                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DGaussianSplat(let pass):
                 return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .scene3DParticle(let pass):
@@ -4800,11 +5414,11 @@ struct MetalPreviewView: NSViewRepresentable {
             case .lineBatch(let pass):
                 return "lineBatch:\(pass.nodeID.uuidString):\(pass.instances.count)"
             case .scene3DPrimitive(let pass):
-                return "scene3d:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "scene3d:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.terrainWidth):\(pass.settings.terrainDepth):\(pass.settings.terrainSegments):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DText(let pass):
-                return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "scene3dtext:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DModel(let pass):
-                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+                return "scene3dmodel:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .scene3DGaussianSplat(let pass):
                 return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .scene3DParticle(let pass):
@@ -4819,6 +5433,8 @@ struct MetalPreviewView: NSViewRepresentable {
                 return "layers:\(layers.map { signature(for: $0.source) }.joined(separator: ":"))"
             case .feedback(let pass):
                 return "feedback:\(pass.nodeID.uuidString):\(signature(for: pass.source))"
+            case .reactionDiffusion(let pass):
+                return "reactiondiffusion:\(pass.nodeID.uuidString):\(pass.source.map(signature(for:)) ?? "nil"):\(pass.feed):\(pass.kill):\(pass.diffusionA):\(pass.diffusionB):\(pass.speed):\(pass.seed):\(pass.inputDrive):\(pass.displayBoost):\(pass.hueShift):\(pass.saturation):\(pass.sourceColor):\(pass.reset)"
             case .feedbackHistory(let nodeID):
                 return "feedbackHistory:\(nodeID.uuidString)"
             }
@@ -4827,11 +5443,11 @@ struct MetalPreviewView: NSViewRepresentable {
         private func signature(for source: PreviewScene3DSource) -> String {
             switch source {
             case .primitive(let pass):
-                return "primitive:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "primitive:\(pass.nodeID.uuidString):\(pass.settings.primitive.rawValue):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(pass.settings.terrainWidth):\(pass.settings.terrainDepth):\(pass.settings.terrainSegments):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .text(let pass):
-                return "text:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.materialMaps))"
+                return "text:\(pass.nodeID.uuidString):\(pass.settings.text):\(pass.settings.fontName):\(pass.settings.fontSize):\(pass.settings.extrusionDepth):\(pass.settings.chamferRadius):\(pass.settings.flatness):\(pass.settings.positionX):\(pass.settings.positionY):\(pass.settings.positionZ):\(pass.settings.rotationX):\(pass.settings.rotationY):\(pass.settings.rotationZ):\(pass.settings.scale):\(pass.settings.cameraDistance):\(pass.settings.cameraOrbit):\(pass.settings.cameraPitch):\(pass.settings.cameraPanX):\(pass.settings.cameraPanY):\(pass.settings.lightIntensity):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .model(let pass):
-                return "model:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.materialMaps))"
+                return "model:\(pass.nodeID.uuidString):\(pass.settings.filename):\(pass.settings.bookmarkData.hashValue):\(signature(for: pass.material)):\(signature(for: pass.materialMaps))"
             case .gaussianSplat(let pass):
                 return "gaussiansplat:\(pass.nodeID.uuidString):\(gaussianSplatAssetSignature(for: pass.settings))"
             case .particle(let pass):
@@ -4852,6 +5468,20 @@ struct MetalPreviewView: NSViewRepresentable {
                 _
             ):
                 return "transform:\(nodeID.uuidString):\(signature(for: child))"
+            case .tile(
+                let nodeID,
+                let child,
+                let centerX,
+                let centerY,
+                let centerZ,
+                let spacingX,
+                let spacingY,
+                let spacingZ,
+                let fieldX,
+                let fieldY,
+                let fieldZ
+            ):
+                return "tile:\(nodeID.uuidString):\(signature(for: child)):\(centerX):\(centerY):\(centerZ):\(spacingX):\(spacingY):\(spacingZ):\(fieldX):\(fieldY):\(fieldZ)"
             }
         }
 
@@ -4863,6 +5493,36 @@ struct MetalPreviewView: NSViewRepresentable {
                 maps.metallic.map(signature(for:)) ?? "nil",
                 maps.bump.map(signature(for:)) ?? "nil",
                 maps.displacement.map(signature(for:)) ?? "nil"
+            ].joined(separator: "|")
+        }
+
+        private func signature(for material: Scene3DMaterialNodeSettings?) -> String {
+            guard let material else { return "nomaterial" }
+            return [
+                "\(material.red)",
+                "\(material.green)",
+                "\(material.blue)",
+                "\(material.alpha)",
+                "\(material.metallic)",
+                "\(material.roughness)",
+                "\(material.emission)",
+                "\(material.displacementScale)",
+                "\(material.doubleSided)",
+                "\(material.wireframe)",
+                material.textureProjection.rawValue,
+                "\(material.textureScale)",
+                "\(material.textureOffsetX)",
+                "\(material.textureOffsetY)"
+            ].joined(separator: "|")
+        }
+
+        private func projectionSignature(for material: Scene3DMaterialNodeSettings?) -> String {
+            guard let material else { return "noproj" }
+            return [
+                material.textureProjection.rawValue,
+                "\(material.textureScale)",
+                "\(material.textureOffsetX)",
+                "\(material.textureOffsetY)"
             ].joined(separator: "|")
         }
 
@@ -5593,6 +6253,8 @@ struct MetalPreviewView: NSViewRepresentable {
                 return 2
             case .posterize:
                 return 3
+            case .levels:
+                return 9
             case .glow:
                 return 4
             case .edges:
@@ -5642,6 +6304,162 @@ struct MetalPreviewView: NSViewRepresentable {
             sampler textureSampler [[sampler(0)]]
         ) {
             return videoTexture.sample(textureSampler, in.uv);
+        }
+        """
+
+        private static let reactionDiffusionShaderSource = """
+        #include <metal_stdlib>
+        using namespace metal;
+
+        struct ReactionVertexOut {
+            float4 position [[position]];
+            float2 uv;
+        };
+
+        struct ReactionUniforms {
+            float2 resolution;
+            float time;
+            float feed;
+            float kill;
+            float diffusionA;
+            float diffusionB;
+            float speed;
+            float seed;
+            float inputDrive;
+            float displayBoost;
+            float hueShift;
+            float saturation;
+            float sourceColor;
+            float reset;
+            float4 tint;
+        };
+
+        vertex ReactionVertexOut reactionVertex(uint vertexID [[vertex_id]]) {
+            float2 positions[4] = {
+                float2(-1.0, -1.0),
+                float2(1.0, -1.0),
+                float2(-1.0, 1.0),
+                float2(1.0, 1.0)
+            };
+
+            float2 uvs[4] = {
+                float2(0.0, 1.0),
+                float2(1.0, 1.0),
+                float2(0.0, 0.0),
+                float2(1.0, 0.0)
+            };
+
+            ReactionVertexOut out;
+            out.position = float4(positions[vertexID], 0.0, 1.0);
+            out.uv = uvs[vertexID];
+            return out;
+        }
+
+        float luminanceRD(float3 c) {
+            return dot(c, float3(0.299, 0.587, 0.114));
+        }
+
+        float hashRD(float2 p) {
+            p = fract(p * float2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+        }
+
+        float3 hsv2rgbRD(float3 c) {
+            float3 rgb = clamp(abs(fract(c.x + float3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+            rgb = rgb * rgb * (3.0 - 2.0 * rgb);
+            return c.z * mix(float3(1.0), rgb, c.y);
+        }
+
+        float rgbHueRD(float3 c) {
+            float4 K = float4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+            float4 p = mix(float4(c.bg, K.wz), float4(c.gb, K.xy), step(c.b, c.g));
+            float4 q = mix(float4(p.xyw, c.r), float4(c.r, p.yzx), step(p.x, c.r));
+            float d = q.x - min(q.w, q.y);
+            return fract(abs(q.z + (q.w - q.y) / (6.0 * d + 1e-6)));
+        }
+
+        float2 stateSample(texture2d<float> stateTexture, sampler textureSampler, float2 uv) {
+            return clamp(stateTexture.sample(textureSampler, clamp(uv, 0.0, 1.0)).rg, 0.0, 1.0);
+        }
+
+        fragment float4 reactionSimulationFragment(
+            ReactionVertexOut in [[stage_in]],
+            texture2d<float> stateTexture [[texture(0)]],
+            texture2d<float> sourceTexture [[texture(1)]],
+            sampler textureSampler [[sampler(0)]],
+            constant ReactionUniforms& uniforms [[buffer(0)]]
+        ) {
+            float2 uv = in.uv;
+            float2 texel = 1.0 / max(uniforms.resolution, float2(1.0));
+
+            float2 c = stateSample(stateTexture, textureSampler, uv);
+            float2 n = stateSample(stateTexture, textureSampler, uv + float2(0.0, texel.y));
+            float2 s = stateSample(stateTexture, textureSampler, uv - float2(0.0, texel.y));
+            float2 e = stateSample(stateTexture, textureSampler, uv + float2(texel.x, 0.0));
+            float2 w = stateSample(stateTexture, textureSampler, uv - float2(texel.x, 0.0));
+            float2 ne = stateSample(stateTexture, textureSampler, uv + texel);
+            float2 nw = stateSample(stateTexture, textureSampler, uv + float2(-texel.x, texel.y));
+            float2 se = stateSample(stateTexture, textureSampler, uv + float2(texel.x, -texel.y));
+            float2 sw = stateSample(stateTexture, textureSampler, uv - texel);
+
+            float2 lap = -c + (n + s + e + w) * 0.2 + (ne + nw + se + sw) * 0.05;
+
+            float feed = mix(0.012, 0.085, clamp(uniforms.feed, 0.0, 1.0));
+            float kill = mix(0.035, 0.075, clamp(uniforms.kill, 0.0, 1.0));
+            float diffA = mix(0.25, 1.35, clamp(uniforms.diffusionA, 0.0, 1.0));
+            float diffB = mix(0.06, 0.72, clamp(uniforms.diffusionB, 0.0, 1.0));
+            float dt = mix(0.05, 0.75, clamp(uniforms.speed, 0.0, 1.0));
+
+            float a = c.x;
+            float b = c.y;
+
+            float reaction = a * b * b;
+            a += (diffA * lap.x - reaction + feed * (1.0 - a)) * dt;
+            b += (diffB * lap.y + reaction - (kill + feed) * b) * dt;
+
+            float seedDots = smoothstep(0.997, 1.0, hashRD(floor(uv * mix(12.0, 90.0, uniforms.seed + 0.001))));
+            float seedAmount = seedDots * clamp(uniforms.seed, 0.0, 1.0);
+
+            float sourceLuma = luminanceRD(sourceTexture.sample(textureSampler, uv).rgb);
+            float sourceInk = smoothstep(0.35, 0.95, sourceLuma);
+            sourceInk *= clamp(uniforms.inputDrive, 0.0, 1.0);
+            float injection = clamp(seedAmount + sourceInk, 0.0, 1.0);
+
+            b = max(b, injection * 0.7);
+            a = mix(a, 0.18, injection * 0.2);
+
+            if (uniforms.reset > 0.5) {
+                float resetInk = smoothstep(0.08, 0.92, sourceLuma);
+                float resetSeed = max(resetInk, seedAmount);
+                b = clamp(resetSeed, 0.0, 1.0);
+                a = mix(1.0, 0.14, b);
+            }
+
+            return float4(clamp(a, 0.0, 1.0), clamp(b, 0.0, 1.0), 0.0, 1.0);
+        }
+
+        fragment float4 reactionDisplayFragment(
+            ReactionVertexOut in [[stage_in]],
+            texture2d<float> stateTexture [[texture(0)]],
+            texture2d<float> sourceTexture [[texture(1)]],
+            sampler textureSampler [[sampler(0)]],
+            constant ReactionUniforms& uniforms [[buffer(0)]]
+        ) {
+            float2 state = stateTexture.sample(textureSampler, in.uv).rg;
+            float boost = mix(2.0, 7.0, uniforms.displayBoost);
+            float base = clamp((state.y * boost) - state.x * 0.18, 0.0, 1.0);
+            float edge = smoothstep(0.03, 0.32, abs(state.x - state.y));
+            float inner = clamp(base * (0.45 + 0.55 * state.x) + edge * 0.28, 0.0, 1.0);
+            float rings = 0.82 + 0.18 * sin((state.y - state.x) * 34.0);
+            float brightness = clamp(inner * rings, 0.0, 1.0);
+            float hue = fract(rgbHueRD(max(uniforms.tint.rgb, float3(0.001))) + uniforms.hueShift + state.y * 0.025);
+            float3 tinted = hsv2rgbRD(float3(hue, clamp(uniforms.saturation, 0.0, 1.0), brightness));
+            float3 color = mix(float3(brightness), tinted, clamp(uniforms.saturation, 0.0, 1.0));
+            float3 sourceColor = sourceTexture.sample(textureSampler, in.uv).rgb;
+            float3 colorizedSource = sourceColor * (0.22 + brightness * 1.15);
+            color = mix(color, colorizedSource, clamp(uniforms.sourceColor, 0.0, 1.0));
+            return float4(clamp(color, 0.0, 1.0), 1.0);
         }
         """
 
@@ -5798,6 +6616,13 @@ struct MetalPreviewView: NSViewRepresentable {
                     angle = min(angle, sector - angle);
                     float2 warped = float2(cos(angle), sin(angle)) * radius + 0.5;
                     return sourceTexture.sample(textureSampler, clamp(warped, 0.0, 1.0));
+                }
+                case 9: {
+                    float blackPoint = clamp(uniforms.primary, 0.0, 1.0);
+                    float whitePoint = clamp(uniforms.secondary, 0.0, 1.0);
+                    float range = max(whitePoint - blackPoint, 0.0001);
+                    float3 leveled = clamp((source.rgb - blackPoint) / range, 0.0, 1.0);
+                    return float4(leveled, source.a);
                 }
                 default:
                     return source;
@@ -6191,6 +7016,24 @@ private struct UnderwaterUniformsGPU {
     var amplitude: Float
     var textureScale: Float
     var uvClampMargin: Float
+}
+
+private struct ReactionDiffusionUniformsGPU {
+    var resolution: SIMD2<Float>
+    var time: Float
+    var feed: Float
+    var kill: Float
+    var diffusionA: Float
+    var diffusionB: Float
+    var speed: Float
+    var seed: Float
+    var inputDrive: Float
+    var displayBoost: Float
+    var hueShift: Float
+    var saturation: Float
+    var sourceColor: Float
+    var reset: Float
+    var tint: SIMD4<Float>
 }
 
 private struct CoreImageEffectUniformsGPU {

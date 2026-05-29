@@ -88,13 +88,6 @@ struct ContentView: View {
                     }
                     .keyboardShortcut("p")
 
-                    if store.hasFragmentNodes {
-                        Button(store.isCodeEditorVisible ? "Hide Code" : "Edit Fragment") {
-                            store.toggleCodeEditorWindow()
-                        }
-                        .keyboardShortcut("e")
-                    }
-
                     Button(isParameterInspectorVisible ? "Hide Parameters" : "Show Parameters") {
                         toggleParameterInspector()
                     }
@@ -1009,6 +1002,8 @@ private struct NodeLibrarySection: View {
             return descriptor("transform", "Transform", "Position scale rotate", .cyan, "core:transform")
         case .scene3DTransform:
             return descriptor("scene3DTransform", "3D Transform", "Transform a 3D scene signal downstream", .blue, "core:scene3DTransform")
+        case .scene3DTile:
+            return descriptor("scene3DTile", "3D Tile", "Repeat a 3D scene in a wrapped infinite field", .blue, "core:scene3DTile")
         case .scene3DRender:
             return descriptor("scene3DRender", "3D Render", "Render one or more 3D scene signals to a shader source", .blue, "core:scene3DRender")
         case .billboard:
@@ -1065,6 +1060,8 @@ private struct NodeLibrarySection: View {
             return descriptor("hueRotate", "Hue Rotate", "Shift image colors", .pink, "core:hueRotate")
         case .posterize:
             return descriptor("posterize", "Posterize", "Classic color bands", .orange, "core:posterize")
+        case .levels:
+            return descriptor("levels", "Levels", "Black/white image contrast", .indigo, "core:levels")
         case .glow:
             return descriptor("glow", "Glow", "Soft luminous halo", .mint, "core:glow")
         case .underwater:
@@ -1143,6 +1140,8 @@ private struct NodeLibrarySection: View {
             return descriptor("temporalGhostTrails", "Temporal Ghost Trails", "Temporal ghost trails video effect", .cyan, "core:temporalGhostTrails")
         case .frameMelt:
             return descriptor("frameMelt", "Frame Melt", "Frame melt feedback video effect", .orange, "core:frameMelt")
+        case .reactionDiffusion:
+            return descriptor("reactionDiffusion", "Reaction Diffusion", "Gray-Scott feedback simulation texture", .mint, "core:reactionDiffusion")
         case .prismSplit:
             return descriptor("prismSplit", "Prism Split", "Prism split video effect", .pink, "core:prismSplit")
         case .ghostFrameEcho:
@@ -1151,6 +1150,8 @@ private struct NodeLibrarySection: View {
             return descriptor("pixelSortBands", "Pixel Sort Bands", "Pixel sort bands video effect", .orange, "core:pixelSortBands")
         case .phyllotaxisPetalSpiral:
             return descriptor("phyllotaxisPetalSpiral", "Phyllotaxis Petal Spiral", "Colored phyllotaxis petal spiral", .pink, "core:phyllotaxisPetalSpiral")
+        case .fbmNoiseHeightMap:
+            return descriptor("fbmNoiseHeightMap", "FBM Noise Height Map", "Grayscale FBM terrain displacement map", .mint, "core:fbmNoiseHeightMap")
         case .metalFragment:
             return descriptor("fragment", "Metal Fragment", "Additional shader source", .green, "core:fragment")
         case .renderOutput:
@@ -1273,7 +1274,7 @@ private struct NodeLibrarySection: View {
             return "sparkles"
         case "hueRotate":
             return "circle.lefthalf.filled"
-        case "posterize":
+        case "posterize", "levels":
             return "square.3.layers.3d.down.right"
         case "feedback":
             return "arrow.trianglehead.2.clockwise.rotate.90"
@@ -1293,7 +1294,7 @@ private struct NodeLibrarySection: View {
             return "rectangle.2.swap"
         case "layers":
             return "square.3.stack.3d"
-        case "plasma", "lavaLamp", "organicMotion", "colorDiffusionFlow", "nebula", "liquidChrome", "liquidFlux", "prismRings", "turntableSpectrum", "underwater", "datamosh", "temporalGhostTrails", "frameMelt":
+        case "plasma", "lavaLamp", "organicMotion", "colorDiffusionFlow", "nebula", "liquidChrome", "liquidFlux", "prismRings", "turntableSpectrum", "underwater", "datamosh", "temporalGhostTrails", "frameMelt", "reactionDiffusion", "fbmNoiseHeightMap":
             return "wand.and.stars"
         case "fragment":
             return "chevron.left.forwardslash.chevron.right"
@@ -1614,6 +1615,8 @@ private struct SelectedNodePanel: View {
             return "Core Image hue adjustment node for rotating colors around the spectrum."
         case .posterize:
             return "Core Image posterize node for reducing an image into stepped color bands."
+        case .levels:
+            return "Image levels node for crushing blacks and stretching whites before masks, feedback, or reaction diffusion."
         case .glow:
             return "Core Image glow node for soft luminous halos around bright areas."
         case .coreImage:
@@ -1622,6 +1625,8 @@ private struct SelectedNodePanel: View {
             return "Image or video distortion effect driven by animated FBM noise. Feed it from Image, Webcam, Layers, or another source node."
         case .feedback:
             return "Feeds a source back through itself using the previous frame, with adjustable level and blend mode."
+        case .reactionDiffusion:
+            return "GPU reaction-diffusion simulation with internal ping-pong state, optional texture drive, and reset control."
         case .transition:
             return "Transitions between two sources with wipe, radial, or checker styles. Drive Progress from a slider, audio, or interpolator."
         case .scale:
@@ -1664,6 +1669,8 @@ private struct SelectedNodePanel: View {
             return "Wraps a visual source and repositions, scales, rotates, and fades it over transparent output. Use it for grids, picture-in-picture, and control layouts."
         case .scene3DTransform:
             return "Wraps a 3D scene signal with downstream position, rotation, and scale so you can keep models upright, stack transforms, and prepare for lights, physics, and scene graphs."
+        case .scene3DTile:
+            return "Repeats a 3D scene signal across a wrapped field. Animate Center Z or Center X to make terrain, objects, or wireframe mountains appear to travel forever."
         case .scene3DRender:
             return "Renders one or more 3D scene signals into a shader source with shared camera controls. Use it to combine models, primitives, text, lights, and downstream transforms into one scene."
         case .billboard:

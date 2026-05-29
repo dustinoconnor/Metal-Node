@@ -90,6 +90,60 @@ private struct CanvasFramePreferenceKey: PreferenceKey {
     }
 }
 
+private struct ConnectionCreateMenuState: Identifiable {
+    let id = UUID()
+    let outputPortID: GraphPort.ID?
+    let inputPortID: GraphPort.ID?
+    let location: CGPoint
+    let options: [ConnectionCreateNodeOption]
+}
+
+private struct ConnectionCreateNodeOption: Identifiable {
+    let kind: ConnectionCreateNodeKind
+    let title: String
+    let subtitle: String
+
+    var id: String { kind.rawValue }
+}
+
+private enum ConnectionCreateNodeKind: String {
+    case renderWindow
+    case layers
+    case mix
+    case feedback
+    case transform
+    case blur
+    case bloom
+    case underwater
+    case metalFragment
+    case monitor
+    case trackball
+    case math
+    case mapRange
+    case interpolator
+    case scalarSmooth
+    case pointSplit
+    case point3Split
+    case point4Split
+    case colorSplit
+    case scene3DRender
+    case scene3DMaterial
+    case scene3DLight
+    case scene3DTransform
+    case scene3DTile
+    case scene3DPrimitive
+    case scene3DText
+    case scene3DModel
+    case oscGet4
+    case oscGetArray
+}
+
+private extension String {
+    var normalizedPortSignalName: String {
+        lowercased().filter { $0.isLetter || $0.isNumber }
+    }
+}
+
 struct NodeCanvasView: View {
     private let canvasSize = CGSize(width: 8000, height: 5200)
     private let canvasCenterAnchorID = "canvas:center"
@@ -100,6 +154,7 @@ struct NodeCanvasView: View {
     let onSelect: (GraphNode.ID) -> Void
 
     @State private var draggedOutputPortID: GraphPort.ID?
+    @State private var draggedInputPortID: GraphPort.ID?
     @State private var dragLocation: CGPoint?
     @State private var highlightedInputPortID: GraphPort.ID?
     @State private var draggedNodeOrigin: CGPoint?
@@ -119,6 +174,7 @@ struct NodeCanvasView: View {
     @State private var canvasScrollView: NSScrollView?
     @State private var isSpacePanMode = false
     @State private var canvasPanStartBoundsOrigin: CGPoint?
+    @State private var connectionCreateMenu: ConnectionCreateMenuState?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -126,8 +182,9 @@ struct NodeCanvasView: View {
                 ScrollView([.horizontal, .vertical]) {
                     ZStack(alignment: .topLeading) {
                         canvasContent
-                            .scaleEffect(zoom, anchor: .topLeading)
+                        connectionCreateMenuOverlay
                     }
+                    .scaleEffect(zoom, anchor: .topLeading)
                     .frame(width: canvasSize.width * zoom, height: canvasSize.height * zoom, alignment: .topLeading)
                     .background(
                         GeometryReader { geometry in
@@ -284,6 +341,11 @@ struct NodeCanvasView: View {
             CanvasKeyboardMonitor(
                 onSpaceChanged: { isPressed in
                     handleSpacePanModeChanged(isPressed)
+                },
+                onEscape: {
+                    guard connectionCreateMenu != nil else { return false }
+                    connectionCreateMenu = nil
+                    return true
                 }
             )
         )
@@ -324,6 +386,24 @@ struct NodeCanvasView: View {
         }
         .onAppear {
             GraphStore.currentForLayoutMetrics = store
+        }
+    }
+
+    @ViewBuilder
+    private var connectionCreateMenuOverlay: some View {
+        if let menu = connectionCreateMenu {
+            let offset = connectionCreateMenuOffset(for: menu.location)
+            ConnectionCreateNodeMenu(
+                options: menu.options,
+                onSelect: { option in
+                    createConnectedNode(option)
+                },
+                onCancel: {
+                    connectionCreateMenu = nil
+                }
+            )
+            .offset(x: offset.x, y: offset.y)
+            .zIndex(1000)
         }
     }
 
@@ -398,6 +478,18 @@ struct NodeCanvasView: View {
                         style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 6])
                     )
                 }
+
+                if
+                    let draggedInputPortID,
+                    let dragLocation,
+                    let end = portCenters[draggedInputPortID]
+                {
+                    context.stroke(
+                        cablePath(from: dragLocation, to: end),
+                        with: .color(.white.opacity(0.8)),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [8, 6])
+                    )
+                }
             }
 
             ForEach(visibleNodes) { node in
@@ -467,17 +559,21 @@ struct NodeCanvasView: View {
 
     private func startPortDrag(_ portID: GraphPort.ID) {
         selectedConnectionID = nil
+        connectionCreateMenu = nil
         draggedOutputPortID = portID
+        draggedInputPortID = nil
         dragLocation = portCenters[portID]
     }
 
     private func startInputPortDrag(_ portID: GraphPort.ID) {
-        guard let connection = document.connections.first(where: { $0.toPortID == portID }) else {
-            return
-        }
+        connectionCreateMenu = nil
+        draggedInputPortID = portID
+        dragLocation = portCenters[portID]
+        guard let connection = document.connections.first(where: { $0.toPortID == portID }) else { return }
         let duplicatesConnection = NSEvent.modifierFlags.contains(.option)
         selectedConnectionID = connection.id
         draggedOutputPortID = connection.fromPortID
+        draggedInputPortID = nil
         dragLocation = portCenters[portID] ?? portCenters[connection.fromPortID]
         if !duplicatesConnection {
             store.disconnectConnection(connection.id)
@@ -495,25 +591,82 @@ struct NodeCanvasView: View {
             y: effectiveScaledLocation.y / zoom
         )
         dragLocation = location
-        highlightedInputPortID = nearestCompatibleInputPort(to: location, for: draggedOutputPortID)
+        if draggedInputPortID == nil {
+            highlightedInputPortID = nearestCompatibleInputPort(to: location, for: draggedOutputPortID)
+        }
     }
 
     private func finishPortDrag() {
-        defer {
-            draggedOutputPortID = nil
-            dragLocation = nil
-            highlightedInputPortID = nil
+        if let draggedInputPortID {
+            finishInputPortDrag(draggedInputPortID)
+            return
         }
 
-        guard let draggedOutputPortID else { return }
+        guard let draggedOutputPortID else {
+            dragLocation = nil
+            highlightedInputPortID = nil
+            return
+        }
 
         let targetPortID = highlightedInputPortID ?? dragLocation.flatMap {
             nearestCompatibleInputPort(to: $0, for: draggedOutputPortID)
         }
 
-        guard let targetPortID else { return }
+        guard let targetPortID else {
+            if
+                let dropLocation = dragLocation,
+                let outputPort = store.port(withID: draggedOutputPortID)
+            {
+                let options = connectionCreateOptions(for: outputPort)
+                if options.isEmpty == false {
+                    connectionCreateMenu = ConnectionCreateMenuState(
+                        outputPortID: draggedOutputPortID,
+                        inputPortID: nil,
+                        location: dropLocation,
+                        options: options
+                    )
+                }
+            }
+            self.draggedOutputPortID = nil
+            draggedInputPortID = nil
+            dragLocation = nil
+            highlightedInputPortID = nil
+            return
+        }
+
         store.connectPorts(from: draggedOutputPortID, to: targetPortID)
         selectedConnectionID = document.connections.first(where: { $0.fromPortID == draggedOutputPortID && $0.toPortID == targetPortID })?.id
+        self.draggedOutputPortID = nil
+        draggedInputPortID = nil
+        dragLocation = nil
+        highlightedInputPortID = nil
+    }
+
+    private func finishInputPortDrag(_ inputPortID: GraphPort.ID) {
+        defer {
+            draggedInputPortID = nil
+            draggedOutputPortID = nil
+            dragLocation = nil
+            highlightedInputPortID = nil
+        }
+
+        guard let inputPort = store.port(withID: inputPortID) else { return }
+
+        if let sourcePortID = dragLocation.flatMap({ nearestCompatibleOutputPort(to: $0, for: inputPortID) }) {
+            store.connectPorts(from: sourcePortID, to: inputPortID)
+            selectedConnectionID = document.connections.first(where: { $0.fromPortID == sourcePortID && $0.toPortID == inputPortID })?.id
+            return
+        }
+
+        guard let dropLocation = dragLocation else { return }
+        let options = connectionCreateOptions(forInput: inputPort)
+        guard options.isEmpty == false else { return }
+        connectionCreateMenu = ConnectionCreateMenuState(
+            outputPortID: nil,
+            inputPortID: inputPortID,
+            location: dropLocation,
+            options: options
+        )
     }
 
     private func handleInputHover(portID: GraphPort.ID, isHovering: Bool) {
@@ -564,6 +717,39 @@ struct NodeCanvasView: View {
                     }
                 } else {
                     bestMatch = (inputPort.id, distance)
+                }
+            }
+        }
+
+        return bestMatch?.id
+    }
+
+    private func nearestCompatibleOutputPort(
+        to location: CGPoint,
+        for inputPortID: GraphPort.ID?
+    ) -> GraphPort.ID? {
+        guard
+            let inputPortID,
+            let inputPort = store.port(withID: inputPortID)
+        else {
+            return nil
+        }
+
+        let maxDistance: CGFloat = 24
+        var bestMatch: (id: GraphPort.ID, distance: CGFloat)?
+
+        for node in document.nodes {
+            for outputPort in node.outputPorts where store.portsAreCompatible(outputPort, inputPort) {
+                guard let center = portCenters[outputPort.id] else { continue }
+                let distance = hypot(center.x - location.x, center.y - location.y)
+                guard distance <= maxDistance else { continue }
+
+                if let currentBest = bestMatch {
+                    if distance < currentBest.distance {
+                        bestMatch = (outputPort.id, distance)
+                    }
+                } else {
+                    bestMatch = (outputPort.id, distance)
                 }
             }
         }
@@ -624,6 +810,288 @@ struct NodeCanvasView: View {
         }
 
         return appliedDelta
+    }
+
+    private func connectionCreateMenuOffset(for location: CGPoint) -> CGPoint {
+        return CGPoint(
+            x: min(max(location.x, 12), max(12, canvasSize.width - connectionCreateMenuSize.width - 12)),
+            y: min(max(location.y, 12), max(12, canvasSize.height - connectionCreateMenuSize.height - 12))
+        )
+    }
+
+    private var connectionCreateMenuSize: CGSize {
+        CGSize(width: 286, height: 360)
+    }
+
+    private func connectionCreateMenuFrame(for location: CGPoint) -> CGRect {
+        CGRect(origin: connectionCreateMenuOffset(for: location), size: connectionCreateMenuSize)
+    }
+
+    private func connectionCreateOptions(for outputPort: GraphPort) -> [ConnectionCreateNodeOption] {
+        func option(_ kind: ConnectionCreateNodeKind, _ title: String, _ subtitle: String) -> ConnectionCreateNodeOption {
+            ConnectionCreateNodeOption(kind: kind, title: title, subtitle: subtitle)
+        }
+
+        switch outputPort.kind {
+        case .fragmentShader:
+            return [
+                option(.renderWindow, "Render Window", "Display this shader in a preview window"),
+                option(.layers, "Layers", "Composite this shader with more layers"),
+                option(.mix, "Mix", "Blend this shader with another shader"),
+                option(.feedback, "Feedback", "Use this shader in a feedback loop"),
+                option(.transform, "2D Transform", "Move, scale, or rotate this shader"),
+                option(.metalFragment, "Metal Fragment", "Feed this shader into a custom effect"),
+                option(.blur, "Blur", "Apply a Core Image blur"),
+                option(.bloom, "Bloom", "Add glow highlights"),
+                option(.underwater, "Underwater", "Apply wavy underwater distortion")
+            ]
+        case .scene3DSignal:
+            return [
+                option(.scene3DRender, "3D Render", "Render this scene to a shader"),
+                option(.scene3DTransform, "3D Transform", "Move, rotate, or scale this scene"),
+                option(.scene3DTile, "3D Tile", "Repeat this scene in an animated field")
+            ]
+        case .lightSignal:
+            return [
+                option(.scene3DPrimitive, "3D Primitive", "Create geometry that uses this light"),
+                option(.scene3DText, "3D Text", "Create text that uses this light"),
+                option(.scene3DModel, "3D Model", "Create a model loader that uses this light")
+            ]
+        case .materialSignal:
+            return [
+                option(.scene3DPrimitive, "3D Primitive", "Create geometry using this material"),
+                option(.scene3DText, "3D Text", "Create text using this material"),
+                option(.scene3DModel, "3D Model", "Create a model loader using this material")
+            ]
+        case .scalarSignal, .audio, .time, .uniform:
+            return [
+                option(.monitor, "Monitor", "Inspect this value"),
+                option(.math, "Math", "Process this value"),
+                option(.mapRange, "Map Range", "Remap this value to another range"),
+                option(.interpolator, "Interpolator", "Use this value as a control input"),
+                option(.scalarSmooth, "Scalar Smooth", "Smooth sudden value changes")
+            ]
+        case .pointSignal:
+            return [
+                option(.pointSplit, "Point Split", "Break this point into X and Y"),
+                option(.monitor, "Monitor", "Inspect this point")
+            ]
+        case .point3Signal:
+            return [
+                option(.point3Split, "Point3 Split", "Break this point into X, Y, and Z"),
+                option(.monitor, "Monitor", "Inspect this point")
+            ]
+        case .point4Signal:
+            return [
+                option(.point4Split, "Point4 Split", "Break this point into four channels"),
+                option(.monitor, "Monitor", "Inspect this point")
+            ]
+        case .colorSignal:
+            return [
+                option(.colorSplit, "Color Split", "Break this color into channels"),
+                option(.monitor, "Monitor", "Inspect this color")
+            ]
+        case .stringSignal:
+            return [
+                option(.monitor, "Monitor", "Inspect this text")
+            ]
+        case .oscPacketSignal:
+            return [
+                option(.oscGet4, "OSC Get 4", "Extract up to four values"),
+                option(.oscGetArray, "OSC Get Array", "Extract a float array")
+            ]
+        default:
+            return []
+        }
+    }
+
+    private func connectionCreateOptions(forInput inputPort: GraphPort) -> [ConnectionCreateNodeOption] {
+        func option(_ kind: ConnectionCreateNodeKind, _ title: String, _ subtitle: String) -> ConnectionCreateNodeOption {
+            ConnectionCreateNodeOption(kind: kind, title: title, subtitle: subtitle)
+        }
+
+        switch inputPort.kind {
+        case .fragmentShader:
+            return [
+                option(.metalFragment, "Metal Fragment", "Create a shader source upstream"),
+                option(.layers, "Layers", "Composite shaders before this input"),
+                option(.mix, "Mix", "Blend two shaders before this input"),
+                option(.feedback, "Feedback", "Create a feedback texture source"),
+                option(.scene3DRender, "3D Render", "Render a 3D scene into this shader input")
+            ]
+        case .scene3DSignal:
+            return [
+                option(.scene3DModel, "3D Model", "Load a model into this scene input"),
+                option(.scene3DPrimitive, "3D Primitive", "Create primitive geometry upstream"),
+                option(.scene3DText, "3D Text", "Create text geometry upstream"),
+                option(.scene3DTransform, "3D Transform", "Transform another scene upstream"),
+                option(.scene3DTile, "3D Tile", "Tile another scene upstream")
+            ]
+        case .materialSignal:
+            return [
+                option(.scene3DMaterial, "3D Material", "Create a material for this model")
+            ]
+        case .lightSignal:
+            return [
+                option(.scene3DLight, "3D Light", "Create a light for this scene node")
+            ]
+        case .scalarSignal(let signal):
+            var options: [ConnectionCreateNodeOption] = []
+            if trackballFriendlyScalarNames.contains(signal) || trackballFriendlyScalarNames.contains(inputPort.name.normalizedPortSignalName) {
+                options.append(option(.trackball, "Trackball", "Drive rotation, pan, or distance interactively"))
+            }
+            options.append(contentsOf: [
+                option(.interpolator, "Interpolator", "Drive this input over time"),
+                option(.math, "Math", "Create a computed scalar upstream"),
+                option(.mapRange, "Map Range", "Remap another scalar upstream"),
+                option(.scalarSmooth, "Scalar Smooth", "Smooth a scalar before this input")
+            ])
+            return options
+        case .stringSignal:
+            return [
+                option(.monitor, "Monitor", "Inspect this text")
+            ]
+        case .pointSignal:
+            return [
+                option(.pointSplit, "Point Split", "Use or inspect a point upstream")
+            ]
+        case .point3Signal:
+            return [
+                option(.point3Split, "Point3 Split", "Use or inspect a 3D point upstream")
+            ]
+        case .point4Signal:
+            return [
+                option(.point4Split, "Point4 Split", "Use or inspect a 4D point upstream")
+            ]
+        case .colorSignal:
+            return [
+                option(.colorSplit, "Color Split", "Use or inspect a color upstream")
+            ]
+        default:
+            return []
+        }
+    }
+
+    private var trackballFriendlyScalarNames: Set<String> {
+        [
+            "orbit",
+            "pitch",
+            "rotationx",
+            "rotationy",
+            "panx",
+            "pany",
+            "distance",
+            "cameradistance"
+        ]
+    }
+
+    private func createConnectedNode(_ option: ConnectionCreateNodeOption) {
+        guard let menu = connectionCreateMenu else { return }
+        connectionCreateMenu = nil
+
+        let initialNodeIDs = Set(store.document.nodes.map(\.id))
+        addNode(forConnectionOption: option.kind, at: menu.location)
+        guard let newNodeID = Set(store.document.nodes.map(\.id)).subtracting(initialNodeIDs).first,
+              let newNode = store.node(withID: newNodeID)
+        else { return }
+
+        store.attachNodeToActiveContainerIfNeeded(newNodeID)
+
+        if
+            let outputPortID = menu.outputPortID,
+            let outputPort = store.port(withID: outputPortID),
+            let inputPort = preferredCompatibleInput(on: newNode, from: outputPort)
+        {
+            store.connectPorts(from: outputPortID, to: inputPort.id)
+            selectedConnectionID = store.document.connections.first(where: { $0.fromPortID == outputPortID && $0.toPortID == inputPort.id })?.id
+        } else if
+            let inputPortID = menu.inputPortID,
+            let inputPort = store.port(withID: inputPortID),
+            let outputPort = preferredCompatibleOutput(on: newNode, to: inputPort)
+        {
+            store.connectPorts(from: outputPort.id, to: inputPortID)
+            selectedConnectionID = store.document.connections.first(where: { $0.fromPortID == outputPort.id && $0.toPortID == inputPortID })?.id
+        }
+
+        selectedNodeIDs = [newNodeID]
+        onSelect(newNodeID)
+    }
+
+    private func addNode(forConnectionOption option: ConnectionCreateNodeKind, at location: CGPoint) {
+        switch option {
+        case .renderWindow:
+            store.addRenderNode(at: location)
+        case .layers:
+            store.addLayersNode(at: location)
+        case .mix:
+            store.addMixNode(at: location)
+        case .feedback:
+            store.addFeedbackNode(at: location)
+        case .transform:
+            store.addTransformNode(at: location)
+        case .blur:
+            store.addBlurNode(at: location)
+        case .bloom:
+            store.addBloomNode(at: location)
+        case .underwater:
+            store.addUnderwaterNode(at: location)
+        case .metalFragment:
+            store.addMetalFragmentNode(at: location)
+        case .monitor:
+            store.addMonitorNode(at: location)
+        case .trackball:
+            store.addTrackballNode(at: location)
+        case .math:
+            store.addMathNode(at: location)
+        case .mapRange:
+            store.addMapRangeNode(at: location)
+        case .interpolator:
+            store.addInterpolatorNode(at: location)
+        case .scalarSmooth:
+            store.addScalarSmoothNode(at: location)
+        case .pointSplit:
+            store.addPointSplitNode(at: location)
+        case .point3Split:
+            store.addPoint3SplitNode(at: location)
+        case .point4Split:
+            store.addPoint4SplitNode(at: location)
+        case .colorSplit:
+            store.addColorSplitNode(at: location)
+        case .scene3DRender:
+            store.addScene3DRenderNode(at: location)
+        case .scene3DMaterial:
+            store.addScene3DMaterialNode(at: location)
+        case .scene3DLight:
+            store.addScene3DLightNode(at: location)
+        case .scene3DTransform:
+            store.addScene3DTransformNode(at: location)
+        case .scene3DTile:
+            store.addScene3DTileNode(at: location)
+        case .scene3DPrimitive:
+            store.addScene3DPrimitiveNode(at: location)
+        case .scene3DText:
+            store.addScene3DTextNode(at: location)
+        case .scene3DModel:
+            store.addScene3DModelNode(at: location)
+        case .oscGet4:
+            store.addOSCGet4Node(at: location)
+        case .oscGetArray:
+            store.addOSCGetArrayNode(at: location)
+        }
+    }
+
+    private func preferredCompatibleInput(on node: GraphNode, from outputPort: GraphPort) -> GraphPort? {
+        if let exactMatch = node.inputPorts.first(where: { $0.kind == outputPort.kind }) {
+            return exactMatch
+        }
+        return node.inputPorts.first(where: { store.portsAreCompatible(outputPort, $0) })
+    }
+
+    private func preferredCompatibleOutput(on node: GraphNode, to inputPort: GraphPort) -> GraphPort? {
+        if let exactMatch = node.outputPorts.first(where: { $0.kind == inputPort.kind }) {
+            return exactMatch
+        }
+        return node.outputPorts.first(where: { store.portsAreCompatible($0, inputPort) })
     }
 
     private func handleDrop(items: [String], at location: CGPoint) -> Bool {
@@ -1076,6 +1544,11 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:scene3DTile" {
+            store.addScene3DTileNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:scene3DRender" {
             store.addScene3DRenderNode(at: dropPoint)
             return finalizeDrop()
@@ -1168,6 +1641,11 @@ struct NodeCanvasView: View {
 
         if item == "core:posterize" {
             store.addPosterizeNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:levels" {
+            store.addLevelsNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -1366,6 +1844,11 @@ struct NodeCanvasView: View {
             return finalizeDrop()
         }
 
+        if item == "core:reactionDiffusion" {
+            store.addReactionDiffusionFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
         if item == "core:prismSplit" {
             store.addPrismSplitFragmentNode(at: dropPoint)
             return finalizeDrop()
@@ -1383,6 +1866,11 @@ struct NodeCanvasView: View {
 
         if item == "core:phyllotaxisPetalSpiral" {
             store.addPhyllotaxisPetalSpiralFragmentNode(at: dropPoint)
+            return finalizeDrop()
+        }
+
+        if item == "core:fbmNoiseHeightMap" {
+            store.addFBMNoiseHeightMapFragmentNode(at: dropPoint)
             return finalizeDrop()
         }
 
@@ -1551,6 +2039,13 @@ struct NodeCanvasView: View {
         guard !isSpacePanMode else { return }
         let canvasPoint = CGPoint(x: location.x / zoom, y: location.y / zoom)
         guard marqueeStartPoint == nil else { return }
+        if let menu = connectionCreateMenu {
+            guard connectionCreateMenuFrame(for: menu.location).contains(canvasPoint) == false else {
+                return
+            }
+            connectionCreateMenu = nil
+            return
+        }
         if document.nodes.filter({ store.isNodeVisibleOnCanvas($0.id) }).contains(where: { nodeContainsPoint($0, point: canvasPoint) }) {
             return
         }
@@ -1991,11 +2486,107 @@ private struct ScrollViewAccessor: NSViewRepresentable {
     }
 }
 
+private struct ConnectionCreateNodeMenu: View {
+    let options: [ConnectionCreateNodeOption]
+    let onSelect: (ConnectionCreateNodeOption) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Create Node")
+                        .font(.headline)
+                    Text("Connect cable to...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+            }
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 6) {
+                    ForEach(options) { option in
+                        Button {
+                            onSelect(option)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: iconName(for: option.kind))
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .frame(width: 22)
+                                    .foregroundStyle(.cyan)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(option.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                    Text(option.subtitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .contentShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: 276)
+        }
+        .padding(12)
+        .frame(width: 286, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.32), radius: 18, y: 10)
+    }
+
+    private func iconName(for kind: ConnectionCreateNodeKind) -> String {
+        switch kind {
+        case .renderWindow:
+            return "display"
+        case .layers:
+            return "square.3.layers.3d"
+        case .mix, .feedback, .transform, .blur, .bloom, .underwater, .metalFragment:
+            return "sparkles"
+        case .scene3DRender, .scene3DMaterial, .scene3DLight, .scene3DTransform, .scene3DTile, .scene3DPrimitive, .scene3DText, .scene3DModel:
+            return "cube"
+        case .monitor:
+            return "waveform.path.ecg"
+        case .trackball:
+            return "rotate.3d"
+        case .math, .mapRange, .interpolator, .scalarSmooth:
+            return "function"
+        case .pointSplit, .point3Split, .point4Split:
+            return "point.3.connected.trianglepath.dotted"
+        case .colorSplit:
+            return "eyedropper"
+        case .oscGet4, .oscGetArray:
+            return "network"
+        }
+    }
+}
+
 private struct CanvasKeyboardMonitor: NSViewRepresentable {
     let onSpaceChanged: (Bool) -> Void
+    let onEscape: () -> Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onSpaceChanged: onSpaceChanged)
+        Coordinator(onSpaceChanged: onSpaceChanged, onEscape: onEscape)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -2006,6 +2597,7 @@ private struct CanvasKeyboardMonitor: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.onSpaceChanged = onSpaceChanged
+        context.coordinator.onEscape = onEscape
     }
 
     static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
@@ -2014,16 +2606,21 @@ private struct CanvasKeyboardMonitor: NSViewRepresentable {
 
     final class Coordinator {
         var onSpaceChanged: (Bool) -> Void
+        var onEscape: () -> Bool
         private var keyDownMonitor: Any?
         private var keyUpMonitor: Any?
 
-        init(onSpaceChanged: @escaping (Bool) -> Void) {
+        init(onSpaceChanged: @escaping (Bool) -> Void, onEscape: @escaping () -> Bool) {
             self.onSpaceChanged = onSpaceChanged
+            self.onEscape = onEscape
         }
 
         func start() {
             guard keyDownMonitor == nil, keyUpMonitor == nil else { return }
             keyDownMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                if event.keyCode == 53 {
+                    return self?.onEscape() == true ? nil : event
+                }
                 guard event.keyCode == 49 else { return event }
                 let textEditingActive = (NSApp.keyWindow?.firstResponder ?? NSApp.mainWindow?.firstResponder) is NSTextView
                 guard !textEditingActive else { return event }
@@ -2657,7 +3254,7 @@ private struct NodeCardView: View {
             Spacer()
 
             switch node.kind {
-            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .glow, .underwater, .feedback, .transition, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .layers:
+            case .uniform, .time, .mouse, .keyboard, .pointSplit, .pointCombine, .point3Split, .point3Combine, .point4Split, .point4Combine, .pointInterpolate, .point3Interpolate, .point4Interpolate, .pointScale, .point3Scale, .point4Scale, .colorSplit, .scroll, .handTracker, .pinch, .scrollGesture, .zoomGesture, .trackball, .depthEstimate, .math, .expression, .clamp, .mapRange, .logic, .compare, .random, .pulse, .fireOnLoad, .counter, .toggle, .delay, .timer, .scalarVariable, .stringVariable, .colorVariable, .scalarArrayVariable, .stringArrayVariable, .colorArrayVariable, .imageArrayVariable, .string, .stringFormat, .stringCompare, .stringSplit, .color, .hslColor, .scalarArray, .stringArray, .colorArray, .imageArray, .scalarArrayIndex, .stringArrayIndex, .colorArrayIndex, .imageArrayIndex, .arrayCount, .textImage, .audio, .beatDetect, .slider, .sliderStyle, .button, .buttonStyle, .polar, .hitZone, .rectHit, .screenSize, .screenBounds, .renderBounds, .renderWindow, .gridLayout, .scalarMultiplexor, .stringMultiplexor, .colorMultiplexor, .imageMultiplexor, .macro, .iterator, .iteratorVariables, .midiOut, .midiCC, .midiCCInput, .midiNoteInput, .oscInput, .oscOutput, .oscReceive, .oscSend, .oscGet4, .oscGetArray, .oscMake4, .oscMakeArray, .oscBundle, .note, .transform, .billboard, .line, .scene3DTransform, .scene3DTile, .scene3DRender, .scene3DLight, .scene3DMaterial, .scene3DPrimitive, .scene3DText, .scene3DModel, .scene3DGaussianSplat, .scene3DParticle, .select, .scalarSwitch, .stringSwitch, .colorSwitch, .circle, .clear, .image, .webView, .aiImage, .videoPlayer, .video, .coreImage, .blur, .bloom, .hueRotate, .posterize, .levels, .glow, .underwater, .feedback, .reactionDiffusion, .transition, .scale, .interpolator, .hold, .scalarSmooth, .trail, .monitor, .layers:
                 Button(role: .destructive) {
                     onDelete()
                 } label: {
@@ -3416,6 +4013,8 @@ private struct NodeCardView: View {
             return "Position XYZ, scale, rotate"
         case .scene3DTransform:
             return "3D scene transform"
+        case .scene3DTile:
+            return "Infinite 3D tiling"
         case .scene3DRender:
             return "3D scene renderer"
         case .billboard:
@@ -3468,12 +4067,16 @@ private struct NodeCardView: View {
             return "Hue shift"
         case .posterize:
             return "Color bands"
+        case .levels:
+            return "Black/white levels"
         case .glow:
             return "Luminous halo"
         case .underwater:
             return "Image distortion"
         case .feedback:
             return "Frame echo"
+        case .reactionDiffusion:
+            return "Reaction simulation"
         case .transition:
             return "Source transition"
         case .scale:
@@ -3695,6 +4298,8 @@ private struct NodeCardView: View {
             return .cyan
         case .scene3DTransform:
             return .blue
+        case .scene3DTile:
+            return .blue
         case .scene3DRender:
             return .blue
         case .billboard:
@@ -3747,12 +4352,16 @@ private struct NodeCardView: View {
             return .pink
         case .posterize:
             return .orange
+        case .levels:
+            return .indigo
         case .glow:
             return .mint
         case .underwater:
             return .teal
         case .feedback:
             return .indigo
+        case .reactionDiffusion:
+            return .mint
         case .transition:
             return .purple
         case .scale:
@@ -3951,6 +4560,8 @@ struct NodeInspectorControls: View {
                 TransformNodeEditor(store: store, nodeID: node.id)
             } else if case .scene3DTransform = node.kind {
                 Scene3DTransformNodeEditor(store: store, nodeID: node.id)
+            } else if case .scene3DTile = node.kind {
+                Scene3DTileNodeEditor(store: store, nodeID: node.id)
             } else if case .scene3DRender = node.kind {
                 Scene3DRenderNodeEditor(store: store, nodeID: node.id)
             } else if case .billboard = node.kind {
@@ -4001,6 +4612,8 @@ struct NodeInspectorControls: View {
                 UnderwaterNodeEditor(store: store, nodeID: node.id)
             } else if case .feedback = node.kind {
                 FeedbackNodeEditor(store: store, nodeID: node.id)
+            } else if case .reactionDiffusion = node.kind {
+                ReactionDiffusionNodeEditor(store: store, nodeID: node.id)
             } else if case .transition = node.kind {
                 TransitionNodeEditor(store: store, nodeID: node.id)
             } else if case .scale = node.kind {
@@ -4999,6 +5612,10 @@ private struct RenderWindowNodeEditor: View {
 
             NumericField(title: "Y", value: settings.y) { newValue in
                 store.updateRenderWindowNodeSettings(nodeID) { $0.y = newValue }
+            }
+
+            NumericField(title: "FPS", value: settings.fps) { newValue in
+                store.updateRenderWindowNodeSettings(nodeID) { $0.fps = max(1.0, min(120.0, newValue)) }
             }
 
             HStack {
@@ -9029,6 +9646,7 @@ private struct CoreImageNodeEditor: View {
                         .bloom,
                         .hueRotate,
                         .posterize,
+                        .levels,
                         .glow,
                         .edges,
                         .pixellate,
@@ -9079,6 +9697,8 @@ private struct CoreImageNodeEditor: View {
             return .hueRotate
         case .posterize:
             return .posterize
+        case .levels:
+            return .levels
         case .glow:
             return .glow
         default:
@@ -9096,6 +9716,8 @@ private struct CoreImageNodeEditor: View {
             return "Angle"
         case .posterize:
             return "Levels"
+        case .levels:
+            return "Black"
         case .glow:
             return "Radius"
         case .edges:
@@ -9113,6 +9735,8 @@ private struct CoreImageNodeEditor: View {
         switch resolvedEffect {
         case .bloom, .glow:
             return "Intensity"
+        case .levels:
+            return "White"
         case .twirl:
             return "Angle"
         case .kaleidoscope:
@@ -9132,6 +9756,8 @@ private struct CoreImageNodeEditor: View {
             return 0...1
         case .posterize:
             return 2...12
+        case .levels:
+            return 0...1
         case .glow:
             return 0...40
         case .edges:
@@ -9168,6 +9794,8 @@ private struct CoreImageNodeEditor: View {
             return CoreImageNodeSettings(effect: .hueRotate, primary: 0.5, secondary: 0.0)
         case .posterize:
             return CoreImageNodeSettings(effect: .posterize, primary: 4.0, secondary: 0.0)
+        case .levels:
+            return CoreImageNodeSettings(effect: .levels, primary: 0.0, secondary: 1.0)
         case .glow:
             return CoreImageNodeSettings(effect: .glow, primary: 10.0, secondary: 0.9)
         case .edges:
@@ -9448,6 +10076,172 @@ private struct FeedbackNodeEditor: View {
             .pickerStyle(.segmented)
 
             Text("Feedback uses the previous frame of this node. Higher values keep longer trails; Add is bright, Screen is softer, Multiply is darker.")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.68))
+        }
+    }
+}
+
+private struct ReactionDiffusionNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forReactionDiffusionNodeID: nodeID)
+        VStack(alignment: .leading, spacing: 10) {
+            LabeledSlider(
+                title: "Feed",
+                value: Binding(
+                    get: { settings.feed },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.feed = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Kill",
+                value: Binding(
+                    get: { settings.kill },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.kill = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Diffusion A",
+                value: Binding(
+                    get: { settings.diffusionA },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.diffusionA = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Diffusion B",
+                value: Binding(
+                    get: { settings.diffusionB },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.diffusionB = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Speed",
+                value: Binding(
+                    get: { settings.speed },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.speed = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Seed",
+                value: Binding(
+                    get: { settings.seed },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.seed = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Input Drive",
+                value: Binding(
+                    get: { settings.inputDrive },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.inputDrive = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Display Boost",
+                value: Binding(
+                    get: { settings.displayBoost },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.displayBoost = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Hue Shift",
+                value: Binding(
+                    get: { settings.hueShift },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.hueShift = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Saturation",
+                value: Binding(
+                    get: { settings.saturation },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.saturation = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Source Color",
+                value: Binding(
+                    get: { settings.sourceColor },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.sourceColor = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            LabeledSlider(
+                title: "Reset",
+                value: Binding(
+                    get: { settings.reset },
+                    set: { newValue in
+                        store.updateReactionDiffusionNodeSettings(nodeID) { $0.reset = newValue }
+                    }
+                ),
+                range: 0...1
+            )
+
+            ColorPicker(
+                "Tint",
+                selection: Binding(
+                    get: {
+                        Color(red: settings.red, green: settings.green, blue: settings.blue, opacity: settings.alpha)
+                    },
+                    set: { newValue in
+                        let components = rgbaComponents(from: newValue)
+                        store.updateReactionDiffusionNodeSettings(nodeID) { settings in
+                            settings.red = components.red
+                            settings.green = components.green
+                            settings.blue = components.blue
+                            settings.alpha = components.alpha
+                        }
+                    }
+                ),
+                supportsOpacity: true
+            )
+            .font(.caption.weight(.semibold))
+
+            Text("This node owns its simulation feedback internally. Use Reset above 0.5 to reseed, then return it to 0.")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.68))
         }
@@ -9885,6 +10679,41 @@ private struct Scene3DPrimitiveNodeEditor: View {
                 range: 0.05...4
             )
 
+            if settings.primitive == .terrain {
+                LabeledSlider(
+                    title: "Terrain Width",
+                    value: Binding(
+                        get: { settings.terrainWidth },
+                        set: { newValue in
+                            store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.terrainWidth = newValue }
+                        }
+                    ),
+                    range: 0.5...120
+                )
+
+                LabeledSlider(
+                    title: "Terrain Depth",
+                    value: Binding(
+                        get: { settings.terrainDepth },
+                        set: { newValue in
+                            store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.terrainDepth = newValue }
+                        }
+                    ),
+                    range: 0.5...120
+                )
+
+                LabeledSlider(
+                    title: "Terrain Segments",
+                    value: Binding(
+                        get: { settings.terrainSegments },
+                        set: { newValue in
+                            store.updateScene3DPrimitiveNodeSettings(nodeID) { $0.terrainSegments = newValue }
+                        }
+                    ),
+                    range: 2...256
+                )
+            }
+
             LabeledSlider(
                 title: "Light",
                 value: Binding(
@@ -10029,6 +10858,13 @@ private struct Scene3DMaterialNodeEditor: View {
                 }
             ), range: 0...1)
 
+            LabeledSlider(title: "Displacement Scale", value: Binding(
+                get: { settings.displacementScale },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.displacementScale = newValue }
+                }
+            ), range: -10...10)
+
             Toggle("Double Sided", isOn: Binding(
                 get: { settings.doubleSided },
                 set: { newValue in
@@ -10036,6 +10872,48 @@ private struct Scene3DMaterialNodeEditor: View {
                 }
             ))
             .font(.caption)
+
+            Toggle("Wireframe", isOn: Binding(
+                get: { settings.wireframe },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.wireframe = newValue }
+                }
+            ))
+            .font(.caption)
+
+            Picker("Projection", selection: Binding(
+                get: { settings.textureProjection },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.textureProjection = newValue }
+                }
+            )) {
+                ForEach(Scene3DTextureProjection.allCases, id: \.self) { projection in
+                    Text(projection.displayName).tag(projection)
+                }
+            }
+            .font(.caption)
+            .pickerStyle(.menu)
+
+            LabeledSlider(title: "Texture Scale", value: Binding(
+                get: { settings.textureScale },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.textureScale = newValue }
+                }
+            ), range: 0.001...10)
+
+            LabeledSlider(title: "Texture Offset X", value: Binding(
+                get: { settings.textureOffsetX },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.textureOffsetX = newValue }
+                }
+            ), range: -10...10)
+
+            LabeledSlider(title: "Texture Offset Y", value: Binding(
+                get: { settings.textureOffsetY },
+                set: { newValue in
+                    store.updateScene3DMaterialNodeSettings(nodeID) { $0.textureOffsetY = newValue }
+                }
+            ), range: -10...10)
         }
     }
 }
@@ -10110,6 +10988,78 @@ private struct Scene3DTransformNodeEditor: View {
                     store.updateScene3DTransformNodeSettings(nodeID) { $0.rotationZ = newValue }
                 }
             ), range: -360...360)
+        }
+    }
+}
+
+private struct Scene3DTileNodeEditor: View {
+    @ObservedObject var store: GraphStore
+    let nodeID: GraphNode.ID
+
+    var body: some View {
+        let settings = store.settings(forScene3DTileNodeID: nodeID)
+
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Center")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            LabeledSlider(title: "Center X", value: Binding(
+                get: { settings.centerX },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.centerX = newValue } }
+            ), range: -500...500)
+
+            LabeledSlider(title: "Center Y", value: Binding(
+                get: { settings.centerY },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.centerY = newValue } }
+            ), range: -500...500)
+
+            LabeledSlider(title: "Center Z", value: Binding(
+                get: { settings.centerZ },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.centerZ = newValue } }
+            ), range: -500...500)
+
+            Text("Spacing")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            LabeledSlider(title: "Spacing X", value: Binding(
+                get: { settings.spacingX },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.spacingX = newValue } }
+            ), range: 0...200)
+
+            LabeledSlider(title: "Spacing Y", value: Binding(
+                get: { settings.spacingY },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.spacingY = newValue } }
+            ), range: 0...200)
+
+            LabeledSlider(title: "Spacing Z", value: Binding(
+                get: { settings.spacingZ },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.spacingZ = newValue } }
+            ), range: 0...200)
+
+            Text("Field Size")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            LabeledSlider(title: "Field X", value: Binding(
+                get: { settings.fieldX },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.fieldX = newValue } }
+            ), range: 0...500)
+
+            LabeledSlider(title: "Field Y", value: Binding(
+                get: { settings.fieldY },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.fieldY = newValue } }
+            ), range: 0...500)
+
+            LabeledSlider(title: "Field Z", value: Binding(
+                get: { settings.fieldZ },
+                set: { newValue in store.updateScene3DTileNodeSettings(nodeID) { $0.fieldZ = newValue } }
+            ), range: 0...500)
+
+            Text("Set an axis spacing or field to 0 to keep that axis as one layer.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 }

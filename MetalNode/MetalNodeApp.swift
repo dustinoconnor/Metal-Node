@@ -213,6 +213,12 @@ private struct MetalNodeCommands: Commands {
             .keyboardShortcut("r")
             .disabled(resolvedStore == nil)
 
+            Button(resolvedStore?.isCodeEditorVisible == true ? "Hide Code Editor" : "Edit Fragment") {
+                resolvedStore?.toggleCodeEditorWindow()
+            }
+            .keyboardShortcut("e")
+            .disabled(!(resolvedStore?.hasFragmentNodes ?? false))
+
             Button("Exit Container Editor") {
                 resolvedStore?.exitActiveContainerEditor()
             }

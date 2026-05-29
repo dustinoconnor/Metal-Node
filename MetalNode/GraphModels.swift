@@ -83,6 +83,7 @@ enum CoreImageEffectKind: String, Codable, CaseIterable, Identifiable {
     case bloom
     case hueRotate
     case posterize
+    case levels
     case glow
     case edges
     case pixellate
@@ -95,6 +96,7 @@ enum CoreImageEffectKind: String, Codable, CaseIterable, Identifiable {
         case .bloom: return "Bloom"
         case .hueRotate: return "Hue Rotate"
         case .posterize: return "Posterize"
+        case .levels: return "Levels"
         case .glow: return "Glow"
         case .edges: return "Edges"
         case .pixellate: return "Pixellate"
@@ -1045,6 +1047,7 @@ enum Scene3DPrimitiveKind: String, CaseIterable, Codable, Identifiable {
     case cylinder
     case torus
     case plane
+    case terrain
 
     var id: String { rawValue }
 
@@ -1057,6 +1060,7 @@ enum Scene3DPrimitiveKind: String, CaseIterable, Codable, Identifiable {
         case .cylinder: return "Cylinder"
         case .torus: return "Torus"
         case .plane: return "Plane"
+        case .terrain: return "Terrain"
         }
     }
 }
@@ -1117,6 +1121,9 @@ struct Scene3DPrimitiveNodeSettings: Equatable, Codable {
     var materialBlue: Double = 1.0
     var materialAlpha: Double = 1.0
     var backgroundAlpha: Double = 0.0
+    var terrainWidth: Double = 24.0
+    var terrainDepth: Double = 24.0
+    var terrainSegments: Double = 96.0
 }
 
 struct Scene3DTextNodeSettings: Equatable, Codable {
@@ -1149,6 +1156,7 @@ struct Scene3DTextNodeSettings: Equatable, Codable {
 struct Scene3DModelNodeSettings: Equatable, Codable {
     var filename: String = "Model"
     var bookmarkData: Data = Data()
+    var parentFolderBookmarkData: Data = Data()
     var positionX: Double = 0.0
     var positionY: Double = 0.0
     var positionZ: Double = 0.0
@@ -1463,6 +1471,18 @@ struct Scene3DTransformNodeSettings: Equatable, Codable {
     var rotationZ: Double = 0.0
 }
 
+struct Scene3DTileNodeSettings: Equatable, Codable {
+    var centerX: Double = 0.0
+    var centerY: Double = 0.0
+    var centerZ: Double = 0.0
+    var spacingX: Double = 20.0
+    var spacingY: Double = 0.0
+    var spacingZ: Double = 20.0
+    var fieldX: Double = 80.0
+    var fieldY: Double = 0.0
+    var fieldZ: Double = 80.0
+}
+
 struct Scene3DRenderNodeSettings: Equatable, Codable {
     var sceneCount: Int = 4
     var cameraDistance: Double = 6.0
@@ -1564,6 +1584,7 @@ extension Scene3DPrimitiveNodeSettings {
         case primitive, positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
         case cameraDistance, cameraOrbit, cameraPitch, cameraPanX, cameraPanY
         case lightIntensity, materialRed, materialGreen, materialBlue, materialAlpha, backgroundAlpha
+        case terrainWidth, terrainDepth, terrainSegments
     }
 
     init(from decoder: Decoder) throws {
@@ -1588,6 +1609,9 @@ extension Scene3DPrimitiveNodeSettings {
         materialBlue = try container.decodeIfPresent(Double.self, forKey: .materialBlue) ?? materialBlue
         materialAlpha = try container.decodeIfPresent(Double.self, forKey: .materialAlpha) ?? materialAlpha
         backgroundAlpha = try container.decodeIfPresent(Double.self, forKey: .backgroundAlpha) ?? backgroundAlpha
+        terrainWidth = try container.decodeIfPresent(Double.self, forKey: .terrainWidth) ?? terrainWidth
+        terrainDepth = try container.decodeIfPresent(Double.self, forKey: .terrainDepth) ?? terrainDepth
+        terrainSegments = try container.decodeIfPresent(Double.self, forKey: .terrainSegments) ?? terrainSegments
     }
 }
 
@@ -1631,7 +1655,7 @@ extension Scene3DTextNodeSettings {
 
 extension Scene3DModelNodeSettings {
     private enum CodingKeys: String, CodingKey {
-        case filename, bookmarkData, positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
+        case filename, bookmarkData, parentFolderBookmarkData, positionX, positionY, positionZ, rotationX, rotationY, rotationZ, scale
         case cameraDistance, cameraOrbit, cameraPitch, cameraPanX, cameraPanY
         case lightIntensity, animationPlay, animationClipStart, animationClipEnd, animationSpeed, animationLoops, backgroundAlpha
     }
@@ -1641,6 +1665,7 @@ extension Scene3DModelNodeSettings {
         self.init()
         filename = try container.decodeIfPresent(String.self, forKey: .filename) ?? filename
         bookmarkData = try container.decodeIfPresent(Data.self, forKey: .bookmarkData) ?? bookmarkData
+        parentFolderBookmarkData = try container.decodeIfPresent(Data.self, forKey: .parentFolderBookmarkData) ?? parentFolderBookmarkData
         positionX = try container.decodeIfPresent(Double.self, forKey: .positionX) ?? positionX
         positionY = try container.decodeIfPresent(Double.self, forKey: .positionY) ?? positionY
         positionZ = try container.decodeIfPresent(Double.self, forKey: .positionZ) ?? positionZ
@@ -1663,6 +1688,44 @@ extension Scene3DModelNodeSettings {
     }
 }
 
+enum Scene3DTextureProjection: String, CaseIterable, Codable {
+    case uv
+    case planarX
+    case planarY
+    case planarZ
+    case box
+
+    var displayName: String {
+        switch self {
+        case .uv: return "UV"
+        case .planarX: return "Planar X"
+        case .planarY: return "Planar Y"
+        case .planarZ: return "Planar Z"
+        case .box: return "Box"
+        }
+    }
+
+    var scalarValue: Double {
+        switch self {
+        case .uv: return 0.0
+        case .planarX: return 1.0
+        case .planarY: return 2.0
+        case .planarZ: return 3.0
+        case .box: return 4.0
+        }
+    }
+
+    static func fromScalar(_ value: Double) -> Scene3DTextureProjection {
+        switch Int(value.rounded()) {
+        case 1: return .planarX
+        case 2: return .planarY
+        case 3: return .planarZ
+        case 4: return .box
+        default: return .uv
+        }
+    }
+}
+
 struct Scene3DMaterialNodeSettings: Equatable, Codable {
     var red: Double = 0.92
     var green: Double = 0.95
@@ -1671,7 +1734,68 @@ struct Scene3DMaterialNodeSettings: Equatable, Codable {
     var metallic: Double = 0.35
     var roughness: Double = 0.28
     var emission: Double = 0.0
+    var displacementScale: Double = 0.15
     var doubleSided: Bool = true
+    var wireframe: Bool = false
+    var textureProjection: Scene3DTextureProjection = .uv
+    var textureScale: Double = 0.1
+    var textureOffsetX: Double = 0.0
+    var textureOffsetY: Double = 0.0
+
+    enum CodingKeys: String, CodingKey {
+        case red, green, blue, alpha, metallic, roughness, emission, displacementScale, doubleSided, wireframe
+        case textureProjection, textureScale, textureOffsetX, textureOffsetY
+    }
+
+    init(
+        red: Double = 0.92,
+        green: Double = 0.95,
+        blue: Double = 1.0,
+        alpha: Double = 1.0,
+        metallic: Double = 0.35,
+        roughness: Double = 0.28,
+        emission: Double = 0.0,
+        displacementScale: Double = 0.15,
+        doubleSided: Bool = true,
+        wireframe: Bool = false,
+        textureProjection: Scene3DTextureProjection = .uv,
+        textureScale: Double = 0.1,
+        textureOffsetX: Double = 0.0,
+        textureOffsetY: Double = 0.0
+    ) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+        self.metallic = metallic
+        self.roughness = roughness
+        self.emission = emission
+        self.displacementScale = displacementScale
+        self.doubleSided = doubleSided
+        self.wireframe = wireframe
+        self.textureProjection = textureProjection
+        self.textureScale = textureScale
+        self.textureOffsetX = textureOffsetX
+        self.textureOffsetY = textureOffsetY
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        red = try container.decodeIfPresent(Double.self, forKey: .red) ?? 0.92
+        green = try container.decodeIfPresent(Double.self, forKey: .green) ?? 0.95
+        blue = try container.decodeIfPresent(Double.self, forKey: .blue) ?? 1.0
+        alpha = try container.decodeIfPresent(Double.self, forKey: .alpha) ?? 1.0
+        metallic = try container.decodeIfPresent(Double.self, forKey: .metallic) ?? 0.35
+        roughness = try container.decodeIfPresent(Double.self, forKey: .roughness) ?? 0.28
+        emission = try container.decodeIfPresent(Double.self, forKey: .emission) ?? 0.0
+        displacementScale = try container.decodeIfPresent(Double.self, forKey: .displacementScale) ?? 0.15
+        doubleSided = try container.decodeIfPresent(Bool.self, forKey: .doubleSided) ?? true
+        wireframe = try container.decodeIfPresent(Bool.self, forKey: .wireframe) ?? false
+        textureProjection = try container.decodeIfPresent(Scene3DTextureProjection.self, forKey: .textureProjection) ?? .uv
+        textureScale = try container.decodeIfPresent(Double.self, forKey: .textureScale) ?? 0.1
+        textureOffsetX = try container.decodeIfPresent(Double.self, forKey: .textureOffsetX) ?? 0.0
+        textureOffsetY = try container.decodeIfPresent(Double.self, forKey: .textureOffsetY) ?? 0.0
+    }
 }
 
 struct PolarNodeSettings: Equatable, Codable {
@@ -1913,6 +2037,34 @@ struct RenderWindowNodeSettings: Equatable, Codable {
     var height: Double = 640.0
     var x: Double = 180.0
     var y: Double = 180.0
+    var fps: Double = 60.0
+
+    enum CodingKeys: String, CodingKey {
+        case targetRenderNodeID
+        case title
+        case levelMode
+        case fullscreen
+        case width
+        case height
+        case x
+        case y
+        case fps
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        targetRenderNodeID = try container.decodeIfPresent(GraphNode.ID.self, forKey: .targetRenderNodeID)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        levelMode = try container.decodeIfPresent(RenderWindowLevelMode.self, forKey: .levelMode) ?? .normal
+        fullscreen = try container.decodeIfPresent(Double.self, forKey: .fullscreen) ?? 0.0
+        width = try container.decodeIfPresent(Double.self, forKey: .width) ?? 960.0
+        height = try container.decodeIfPresent(Double.self, forKey: .height) ?? 640.0
+        x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 180.0
+        y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 180.0
+        fps = try container.decodeIfPresent(Double.self, forKey: .fps) ?? 60.0
+    }
 }
 
 struct GridLayoutNodeSettings: Equatable, Codable {
@@ -2272,7 +2424,7 @@ enum CompareOperation: String, CaseIterable, Identifiable, Codable {
 }
 
 struct CompareNodeSettings: Equatable, Codable {
-    var operation: CompareOperation = .lessThan
+    var operation: CompareOperation = .equal
     var referenceValue: Double = 0.5
     var epsilon: Double = 0.02
 }
@@ -2576,6 +2728,25 @@ struct FeedbackNodeSettings: Equatable, Codable {
     var blendMode: FeedbackBlendMode = .screen
 }
 
+struct ReactionDiffusionNodeSettings: Equatable, Codable {
+    var feed: Double = 0.52
+    var kill: Double = 0.42
+    var diffusionA: Double = 0.72
+    var diffusionB: Double = 0.38
+    var speed: Double = 0.45
+    var seed: Double = 0.45
+    var inputDrive: Double = 0.15
+    var displayBoost: Double = 0.7
+    var hueShift: Double = 0.0
+    var saturation: Double = 0.85
+    var sourceColor: Double = 0.0
+    var reset: Double = 0.0
+    var red: Double = 0.2
+    var green: Double = 0.95
+    var blue: Double = 0.85
+    var alpha: Double = 1.0
+}
+
 struct UnderwaterNodeSettings: Equatable, Codable {
     var scale: Double = 3.2
     var distortion: Double = 0.035
@@ -2754,6 +2925,7 @@ enum GraphNodeKind {
     case billboard
     case line
     case scene3DTransform
+    case scene3DTile
     case scene3DRender
     case scene3DLight
     case scene3DMaterial
@@ -2795,9 +2967,11 @@ enum GraphNodeKind {
     case bloom
     case hueRotate
     case posterize
+    case levels
     case glow
     case underwater
     case feedback
+    case reactionDiffusion
     case monitor
     case mix
     case layers
@@ -2893,6 +3067,25 @@ struct PreviewFeedbackPass {
     let source: PreviewPassSource
     let level: Float
     let blendMode: FeedbackBlendMode
+}
+
+struct PreviewReactionDiffusionPass {
+    let nodeID: UUID
+    let source: PreviewPassSource?
+    let settings: ReactionDiffusionNodeSettings
+    let feed: Float
+    let kill: Float
+    let diffusionA: Float
+    let diffusionB: Float
+    let speed: Float
+    let seed: Float
+    let inputDrive: Float
+    let displayBoost: Float
+    let hueShift: Float
+    let saturation: Float
+    let sourceColor: Float
+    let reset: Float
+    let tint: SIMD4<Float>
 }
 
 struct PreviewUnderwaterPass {
@@ -3017,6 +3210,19 @@ indirect enum PreviewScene3DSource {
         rotationDegreesY: Float,
         rotationDegreesZ: Float
     )
+    case tile(
+        nodeID: UUID,
+        source: PreviewScene3DSource,
+        centerX: Float,
+        centerY: Float,
+        centerZ: Float,
+        spacingX: Float,
+        spacingY: Float,
+        spacingZ: Float,
+        fieldX: Float,
+        fieldY: Float,
+        fieldZ: Float
+    )
 }
 
 struct PreviewScene3DRenderPass {
@@ -3065,6 +3271,7 @@ indirect enum PreviewPassSource {
     case mix(primary: PreviewPassSource, secondary: PreviewPassSource, amount: Float)
     case layers(layers: [PreviewLayerPass], opacity: Float)
     case feedback(PreviewFeedbackPass)
+    case reactionDiffusion(PreviewReactionDiffusionPass)
     case feedbackHistory(nodeID: UUID)
 }
 
@@ -3088,6 +3295,7 @@ indirect enum PreviewRenderConfiguration {
     case scene3DGaussianSplat(PreviewScene3DGaussianSplatPass)
     case scene3DParticle(PreviewScene3DParticlePass)
     case feedback(PreviewFeedbackPass)
+    case reactionDiffusion(PreviewReactionDiffusionPass)
     case transition(PreviewTransitionPass)
     case mix(primary: PreviewPassSource, secondary: PreviewPassSource, amount: Float)
     case layers(layers: [PreviewLayerPass], opacity: Float)
