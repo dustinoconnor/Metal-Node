@@ -43,6 +43,10 @@ Metal Composer includes a render-window Syphon publishing bridge using the offic
 
 Render windows publish under names like `Metal Composer - Render Window`, making them available to Syphon-compatible macOS apps.
 
+## Acknowledgements
+
+Metal Composer embeds the open source Syphon framework for realtime video sharing between macOS creative-coding, VJ, and visual tools. Syphon was created by Tom Butterworth and vade (Anton Marini), and its influence runs deep through the Quartz Composer-era live visuals community that inspired this project.
+
 ## Keywords
 
 Metal Composer is useful for realtime Metal shaders, node-based visual programming, creative coding, audio-reactive graphics, OSC, MIDI, Syphon, SceneKit, Gaussian splatting, hand tracking, computer vision, feedback video effects, shader graph experiments, and Quartz Composer/Vuo/TouchDesigner-style visual prototyping.
