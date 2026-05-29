@@ -2038,6 +2038,8 @@ struct RenderWindowNodeSettings: Equatable, Codable {
     var x: Double = 180.0
     var y: Double = 180.0
     var fps: Double = 60.0
+    var syphonEnabled: Bool = false
+    var syphonName: String = ""
 
     enum CodingKeys: String, CodingKey {
         case targetRenderNodeID
@@ -2049,6 +2051,8 @@ struct RenderWindowNodeSettings: Equatable, Codable {
         case x
         case y
         case fps
+        case syphonEnabled
+        case syphonName
     }
 
     init() {}
@@ -2064,6 +2068,8 @@ struct RenderWindowNodeSettings: Equatable, Codable {
         x = try container.decodeIfPresent(Double.self, forKey: .x) ?? 180.0
         y = try container.decodeIfPresent(Double.self, forKey: .y) ?? 180.0
         fps = try container.decodeIfPresent(Double.self, forKey: .fps) ?? 60.0
+        syphonEnabled = try container.decodeIfPresent(Bool.self, forKey: .syphonEnabled) ?? false
+        syphonName = try container.decodeIfPresent(String.self, forKey: .syphonName) ?? ""
     }
 }
 

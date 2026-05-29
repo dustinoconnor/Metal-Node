@@ -19,6 +19,7 @@ final class SyphonOutputBridge {
     #if canImport(Syphon)
     private var server: SyphonMetalServer?
     private var deviceID: ObjectIdentifier?
+    private var hasLoggedServerStart = false
     #endif
 
     init(serverName: String) {
@@ -32,6 +33,7 @@ final class SyphonOutputBridge {
         #if canImport(Syphon)
         server = nil
         deviceID = nil
+        hasLoggedServerStart = false
         #endif
     }
 
@@ -41,6 +43,14 @@ final class SyphonOutputBridge {
         if server == nil || deviceID != currentDeviceID {
             server = SyphonMetalServer(name: serverName, device: texture.device, options: nil)
             deviceID = currentDeviceID
+            if let server {
+                let publishedName = server.name ?? serverName
+                print("Syphon server started: \(publishedName) \(server.serverDescription)")
+                hasLoggedServerStart = true
+            } else if hasLoggedServerStart == false {
+                print("Syphon server failed to start: \(serverName)")
+                hasLoggedServerStart = true
+            }
         }
 
         let imageRegion = NSRect(
@@ -53,7 +63,7 @@ final class SyphonOutputBridge {
             texture,
             on: commandBuffer,
             imageRegion: imageRegion,
-            flipped: false
+            flipped: true
         )
         #endif
     }

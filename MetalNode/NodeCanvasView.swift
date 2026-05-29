@@ -5578,6 +5578,23 @@ private struct RenderWindowNodeEditor: View {
             ))
             .textFieldStyle(.roundedBorder)
 
+            Toggle("Syphon Enabled", isOn: Binding(
+                get: { settings.syphonEnabled },
+                set: { newValue in
+                    store.updateRenderWindowNodeSettings(nodeID) { $0.syphonEnabled = newValue }
+                }
+            ))
+            .toggleStyle(.switch)
+
+            TextField("Syphon Server Name", text: Binding(
+                get: { settings.syphonName },
+                set: { newValue in
+                    store.updateRenderWindowNodeSettings(nodeID) { $0.syphonName = newValue }
+                }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .disabled(settings.syphonEnabled == false)
+
             Picker("Level", selection: Binding(
                 get: { settings.levelMode },
                 set: { newValue in

@@ -16541,6 +16541,21 @@ final class GraphStore: ObservableObject {
         return 60
     }
 
+    func preferredPreviewWindowSyphonServerName(for renderNodeID: GraphNode.ID) -> String? {
+        for node in document.nodes {
+            guard case .renderWindow = node.kind else { continue }
+            guard targetRenderNodeID(forRenderWindowNodeID: node.id) == renderNodeID else { continue }
+            let settings = settings(forRenderWindowNodeID: node.id)
+            guard settings.syphonEnabled else { return nil }
+            let trimmedName = settings.syphonName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedName.isEmpty == false {
+                return trimmedName
+            }
+            return "Metal Composer - \(effectiveRenderWindowTitle(forRenderNodeID: renderNodeID))"
+        }
+        return nil
+    }
+
     private func targetRenderNodeID(forRenderWindowNodeID nodeID: GraphNode.ID) -> GraphNode.ID? {
         let settings = settings(forRenderWindowNodeID: nodeID)
         if let targetID = settings.targetRenderNodeID,

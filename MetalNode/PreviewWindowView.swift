@@ -12,13 +12,12 @@ struct PreviewWindowView: View {
     let renderNodeID: GraphNode.ID
 
     var body: some View {
-        let renderTitle = store.node(withID: renderNodeID)?.title ?? "Render Window"
         MetalPreviewView(
             configuration: store.previewConfiguration(forRenderNodeID: renderNodeID),
             isRunning: store.isGraphRunning,
             preferredFramesPerSecond: store.preferredPreviewWindowFramesPerSecond(for: renderNodeID),
             videoRecorder: store.previewVideoRecorder(forRenderNodeID: renderNodeID),
-            syphonServerName: "Metal Composer - \(renderTitle)",
+            syphonServerName: store.preferredPreviewWindowSyphonServerName(for: renderNodeID),
             onMouseChange: store.updateMousePosition,
             onMouseButtonChange: store.updateMouseButtons,
             onModifierFlagsChange: store.updatePreviewModifierFlags,

@@ -951,7 +951,7 @@ private struct NodeLibrarySection: View {
         case .renderBounds:
             return descriptor("renderBounds", "Render Bounds", "Track a render window's pixel bounds", .cyan, "core:renderBounds")
         case .renderWindow:
-            return descriptor("renderWindow", "Window Control", "Set render window size, position, title, level, and fullscreen", .cyan, "core:renderWindow")
+            return descriptor("renderWindow", "Window Control", "Set render window size, position, title, Syphon output, level, and fullscreen", .cyan, "core:renderWindow")
         case .keyboard:
             return descriptor("keyboard", "Keyboard", "Selected key with optional modifiers", .blue, "core:keyboard")
         case .gridLayout:
@@ -1566,7 +1566,7 @@ private struct SelectedNodePanel: View {
         case .renderBounds:
             return "Outputs the current pixel bounds of a specific render window so layouts and shaders can respond to the actual preview size."
         case .renderWindow:
-            return "Controls a render window's title, level, fullscreen state, position, and pixel size so you can build compact previews, overlays, desktop windows, or fixed output layouts."
+            return "Controls a render window's title, Syphon output name, level, fullscreen state, position, and pixel size so you can build compact previews, overlays, desktop windows, or fixed output layouts."
         case .keyboard:
             return "Outputs 1 while a selected key is pressed, with optional Command, Option, Shift, and Control requirements for shortcuts and fullscreen toggles."
         case .gridLayout:
