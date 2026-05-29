@@ -1,6 +1,6 @@
 # Metal Composer
 
-Metal Composer, developed in the MetalNode project, is a macOS node-based visual programming app for building realtime Metal shader compositions, audio-reactive visuals, 2D/3D scene experiments, OSC/MIDI-driven patches, Gaussian splat scenes, Syphon output, and interactive graphics without having to manage separate Xcode projects for every idea.
+Metal Composer, developed in the MetalNode project, is a macOS node-based visual programming app for building realtime Metal shader compositions, audio-reactive visuals, 2D/3D scene experiments, OSC/MIDI-driven patches, hand-tracking experiments, Gaussian splat scenes, Syphon output, and interactive graphics without having to manage separate Xcode projects for every idea.
 
 The app combines a visual graph canvas, live renderer windows, editable Metal fragment nodes, preset video effects, image/video sources, audio analysis, MIDI/OSC, SceneKit-based 3D nodes, feedback loops, Gaussian splat experiments, and utility nodes for math, arrays, interaction, transforms, and layering.
 
@@ -13,6 +13,7 @@ The app combines a visual graph canvas, live renderer windows, editable Metal fr
 - Image, video, webcam, WebView, text, and AI image source nodes.
 - Audio input, spectrum analysis, and beat detection nodes.
 - MIDI output, MIDI input, and OSC send/receive helper nodes.
+- Vision-based interaction experiments including hand-tracking nodes for driving graphics with camera input.
 - 2D transform, billboard, line, layers, feedback, trail, iterator, array, and utility nodes.
 - SceneKit 3D pipeline with primitives, text, model loading, materials, lights, particles, trackball/camera controls, and 3D scene rendering.
 - Support for imported model files, textures, animated materials, and model animation playback.
@@ -36,15 +37,15 @@ The project is still evolving quickly, so expect rough edges, unfinished nodes, 
 
 Open `MetalNode.xcodeproj` in Xcode and run the `MetalNode` scheme. The built app appears as **Metal Composer**.
 
-## Optional Syphon Output
+## Syphon Output
 
-Metal Composer includes a render-window Syphon publishing bridge that uses the official Syphon Metal server API when `Syphon.framework` is linked with the app. Without the framework, the bridge compiles as a no-op so the project still builds cleanly from source.
+Metal Composer includes a render-window Syphon publishing bridge using the official Syphon Metal server API. The app embeds `Syphon.framework` from the Syphon project so render windows can be routed into Syphon-compatible macOS VJ, video, and creative-coding apps.
 
 Render windows publish under names like `Metal Composer - Render Window`, making them available to Syphon-compatible macOS apps.
 
 ## Keywords
 
-Metal Composer is useful for realtime Metal shaders, node-based visual programming, creative coding, audio-reactive graphics, OSC, MIDI, Syphon, SceneKit, Gaussian splatting, feedback video effects, shader graph experiments, and Quartz Composer/Vuo/TouchDesigner-style visual prototyping.
+Metal Composer is useful for realtime Metal shaders, node-based visual programming, creative coding, audio-reactive graphics, OSC, MIDI, Syphon, SceneKit, Gaussian splatting, hand tracking, computer vision, feedback video effects, shader graph experiments, and Quartz Composer/Vuo/TouchDesigner-style visual prototyping.
 
 ## Goal
 

@@ -6,8 +6,28 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C4F000000000000000000002 /* Syphon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C4F000000000000000000001 /* Syphon.framework */; };
+		C4F000000000000000000003 /* Syphon.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = C4F000000000000000000001 /* Syphon.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		C4F000000000000000000005 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				C4F000000000000000000003 /* Syphon.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		C40C29892F619AE8003ADEA3 /* MetalNode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = MetalNode.app; path = "Metal Composer.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C4F000000000000000000001 /* Syphon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = Syphon.framework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C4F000000000000000000002 /* Syphon.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -33,6 +54,7 @@
 			isa = PBXGroup;
 			children = (
 				C40C298B2F619AE8003ADEA3 /* MetalNode */,
+				C4F000000000000000000004 /* Vendor */,
 				C40C298A2F619AE8003ADEA3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -45,6 +67,14 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		C4F000000000000000000004 /* Vendor */ = {
+			isa = PBXGroup;
+			children = (
+				C4F000000000000000000001 /* Syphon.framework */,
+			);
+			path = Vendor;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -54,6 +84,7 @@
 			buildPhases = (
 				C40C29852F619AE8003ADEA3 /* Sources */,
 				C40C29862F619AE8003ADEA3 /* Frameworks */,
+				C4F000000000000000000005 /* Embed Frameworks */,
 				C40C29872F619AE8003ADEA3 /* Resources */,
 			);
 			buildRules = (
@@ -259,6 +290,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Metal Composer";
 				INFOPLIST_KEY_CFBundleName = "Metal Composer";
@@ -295,6 +330,10 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Vendor",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Metal Composer";
 				INFOPLIST_KEY_CFBundleName = "Metal Composer";
